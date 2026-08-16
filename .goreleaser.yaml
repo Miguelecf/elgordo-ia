@@ -1,0 +1,30 @@
+version: 2
+
+project_name: elgordo
+
+builds:
+  - id: elgordo
+    main: ./cmd/elgordo
+    binary: elgordo
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "elgordo_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc

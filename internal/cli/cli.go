@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -73,6 +74,8 @@ func (a app) run(args []string) error {
 		return a.uninstall(args[1:])
 	case "init":
 		return a.initProject(args[1:])
+	case "skill-registry":
+		return a.skillRegistry(args[1:])
 	case "status":
 		return a.status(args[1:])
 	case "change":
@@ -197,7 +200,35 @@ func (a app) initProject(args []string) error {
 		return writeJSON(a.deps.Stdout, map[string]any{"initialized": true, "repository": store.Root})
 	}
 	fmt.Fprintf(a.deps.Stdout, "Initialized ElGordo in %s\n", store.Root)
-	fmt.Fprintln(a.deps.Stdout, "Local workflow artifacts and Engram config are excluded from Git.")
+	fmt.Fprintln(a.deps.Stdout, "Local workflow artifacts, Engram config, and the skill registry are excluded from Git.")
+	return nil
+}
+
+func (a app) skillRegistry(args []string) error {
+	if len(args) == 0 || args[0] != "refresh" {
+		return errors.New("usage: elgordo skill-registry refresh [--force]")
+	}
+	fs := newFlagSet("skill-registry refresh", a.deps.Stderr)
+	force := fs.Bool("force", false, "rewrite the registry even when unchanged")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: elgordo skill-registry refresh [--force]")
+	}
+	store, err := a.store(true)
+	if err != nil {
+		return err
+	}
+	result, err := store.RefreshSkillRegistry(*force)
+	if err != nil {
+		return err
+	}
+	status := "unchanged"
+	if result.Updated {
+		status = "updated"
+	}
+	fmt.Fprintf(a.deps.Stdout, "Skill registry %s: %s (%d skills)\n", status, filepath.Join(store.Root, ".atl", "skill-registry.md"), result.Count)
 	return nil
 }
 
@@ -484,6 +515,7 @@ Usage:
   elgordo doctor [--json]
   elgordo uninstall
   elgordo init
+  elgordo skill-registry refresh [--force]
   elgordo status [--json]
   elgordo change start <slug> [--title <title>]
   elgordo plan <hash|ready|verify|seal|replan>

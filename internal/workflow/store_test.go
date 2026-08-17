@@ -129,7 +129,7 @@ func TestInitIsIdempotentAndUsesLocalExcludes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rule := range []string{"/.elgordo/", "/.engram/"} {
+	for _, rule := range []string{"/.elgordo/", "/.engram/", "/.atl/"} {
 		if strings.Count(string(data), rule) != 1 {
 			t.Fatalf("rule %q count != 1 in %q", rule, data)
 		}
@@ -253,5 +253,8 @@ func TestInitSupportsLinkedWorktree(t *testing.T) {
 	store := NewStore(worktree, "test")
 	if err := store.Init(); err != nil {
 		t.Fatalf("Init linked worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".atl", "skill-registry.md")); err != nil {
+		t.Fatalf("linked worktree registry: %v", err)
 	}
 }

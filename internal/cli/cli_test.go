@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,6 +43,27 @@ func TestUnknownCommandFails(t *testing.T) {
 	code, _, stderr := runTestCLI(t.TempDir(), "wat")
 	if code != 1 || !strings.Contains(stderr, "unknown command") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
+
+func TestSkillRegistryRefreshCommand(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if code, _, stderr := runTestCLI(root, "init"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if code, stdout, stderr := runTestCLI(root, "skill-registry", "refresh", "--force"); code != 0 || !strings.Contains(stdout, "Skill registry updated") {
+		t.Fatalf("refresh: code=%d out=%q err=%q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".atl", "skill-registry.md")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := runTestCLI(root, "skill-registry", "refresh", "unexpected"); code == 0 {
+		t.Fatal("skill registry refresh accepted trailing argument")
 	}
 }
 

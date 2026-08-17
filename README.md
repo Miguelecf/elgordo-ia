@@ -82,7 +82,13 @@ The workflow and evidence contract should make model capability less decisive th
 └── events.jsonl
 ```
 
-It also creates `.engram/config.json` locally so Engram resolves the repository deterministically. Neither directory is committed by default.
+It also creates `.engram/config.json` so Engram resolves the repository deterministically and `.atl/skill-registry.md` as a delegator-only index of available project and user skills. All three directories are excluded through `.git/info/exclude` and are not committed by default.
+
+The registry prefers project skills over duplicate user skills, omits internal `sdd-*`, `_shared`, and `skill-registry` entries, and stores exact `SKILL.md` paths rather than generated summaries. Refresh it after skill changes:
+
+```bash
+elgordo skill-registry refresh --force
+```
 
 ## Human Gates
 
@@ -103,6 +109,7 @@ OpenCode permission prompts are the v0.1.0 human-presence boundary. They are not
 
 ```bash
 elgordo status --json
+elgordo skill-registry refresh --force
 elgordo doctor
 elgordo sync
 elgordo uninstall

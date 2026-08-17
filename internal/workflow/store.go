@@ -23,6 +23,8 @@ type Store struct {
 	Root    string
 	Version string
 	Now     func() time.Time
+
+	skillSources []skillSource
 }
 
 func FindRepositoryRoot(dir string) (string, error) {
@@ -72,7 +74,14 @@ func (s *Store) Init() error {
 			return err
 		}
 	}
-	return addLocalExclude(s.Root, "/.engram/")
+	if err := addLocalExclude(s.Root, "/.engram/"); err != nil {
+		return err
+	}
+	if err := addLocalExclude(s.Root, "/.atl/"); err != nil {
+		return err
+	}
+	_, err := s.RefreshSkillRegistry(false)
+	return err
 }
 
 func (s *Store) StartChange(slug, title string) (*State, error) {

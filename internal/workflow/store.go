@@ -106,9 +106,24 @@ func (s *Store) StartChange(slug, title string) (*State, error) {
 		if err := os.MkdirAll(filepath.Join(dir, "plans"), 0o755); err != nil {
 			return nil, err
 		}
+		openspecDir := filepath.Join(s.Root, "openspec", "changes", slug)
+		if _, err := os.Stat(openspecDir); err == nil {
+			return nil, fmt.Errorf("OpenSpec change %q already exists", slug)
+		}
+		if err := os.MkdirAll(filepath.Join(openspecDir, "specs"), 0o755); err != nil {
+			return nil, err
+		}
 		for path, content := range initialArtifacts(title) {
 			if err := writeFileAtomic(filepath.Join(dir, path), []byte(content), 0o644); err != nil {
 				os.RemoveAll(dir)
+				os.RemoveAll(openspecDir)
+				return nil, err
+			}
+		}
+		for path, content := range initialOpenSpecArtifacts(title) {
+			if err := writeFileAtomic(filepath.Join(openspecDir, path), []byte(content), 0o644); err != nil {
+				os.RemoveAll(dir)
+				os.RemoveAll(openspecDir)
 				return nil, err
 			}
 		}
@@ -125,10 +140,12 @@ func (s *Store) StartChange(slug, title string) (*State, error) {
 		event := Event{At: now, Command: "change start", To: PhasePlanning}
 		if err := s.commitState(&state, event); err != nil {
 			os.RemoveAll(dir)
+			os.RemoveAll(openspecDir)
 			return nil, err
 		}
 		if err := writeFileAtomic(s.activePath(), []byte(slug+"\n"), 0o644); err != nil {
 			os.RemoveAll(dir)
+			os.RemoveAll(openspecDir)
 			return nil, err
 		}
 		return &state, nil
@@ -151,7 +168,7 @@ func (s *Store) PlanHash() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.hashPlan(state)
+	return s.hashContract(state)
 }
 
 func (s *Store) PlanReady() (*State, error) {
@@ -167,7 +184,7 @@ func (s *Store) SealPlan(expected string) (*State, error) {
 		if state.Phase != PhasePlanReview {
 			return nil, invalidPhase(state.Phase, PhasePlanReview)
 		}
-		actual, err := s.hashPlan(state)
+		actual, err := s.hashContract(state)
 		if err != nil {
 			return nil, err
 		}
@@ -175,17 +192,39 @@ func (s *Store) SealPlan(expected string) (*State, error) {
 		if expected == "" || expected != actual {
 			return nil, fmt.Errorf("plan hash mismatch: expected %q, current plan is %q", expected, actual)
 		}
-		planContent, err := os.ReadFile(filepath.Join(s.changeDir(state.ChangeID), filepath.FromSlash(state.Plan.Path)))
+		changeDir := s.changeDir(state.ChangeID)
+		planContent, err := os.ReadFile(filepath.Join(changeDir, filepath.FromSlash(state.Plan.Path)))
+		if err != nil {
+			return nil, err
+		}
+		contentHash, err := s.hashPlan(state)
 		if err != nil {
 			return nil, err
 		}
 		state.Plan.Snapshot = fmt.Sprintf("plans/%04d.sealed.md", state.Plan.Revision)
-		if err := writeFileAtomic(filepath.Join(s.changeDir(state.ChangeID), filepath.FromSlash(state.Plan.Snapshot)), planContent, 0o444); err != nil {
+		if err := writeFileAtomic(filepath.Join(changeDir, filepath.FromSlash(state.Plan.Snapshot)), planContent, 0o444); err != nil {
+			return nil, err
+		}
+		manifest, manifestPath, err := s.buildSealManifest(state)
+		if err != nil {
+			return nil, err
+		}
+		manifestData, err := marshalManifest(manifest)
+		if err != nil {
+			return nil, err
+		}
+		state.Plan.ManifestPath = manifestPath
+		if err := writeFileAtomic(filepath.Join(changeDir, filepath.FromSlash(manifestPath)), manifestData, 0o644); err != nil {
+			return nil, err
+		}
+		state.Plan.ManifestSnapshot = fmt.Sprintf("plans/%04d.seal.json", state.Plan.Revision)
+		if err := writeFileAtomic(filepath.Join(changeDir, filepath.FromSlash(state.Plan.ManifestSnapshot)), manifestData, 0o444); err != nil {
 			return nil, err
 		}
 		now := s.Now()
 		from := state.Phase
 		state.Plan.SHA256 = actual
+		state.Plan.ContentSHA256 = contentHash
 		state.Plan.SealedAt = &now
 		state.Phase = PhaseExecuting
 		state.ExecutionRound++
@@ -334,13 +373,16 @@ func (s *Store) replan(command string, allowed []Phase, reason, verdict string) 
 			return nil, err
 		}
 		snapshotSum := sha256.Sum256(content)
-		if "sha256:"+hex.EncodeToString(snapshotSum[:]) != state.Plan.SHA256 {
+		if "sha256:"+hex.EncodeToString(snapshotSum[:]) != state.Plan.ContentSHA256 {
 			return nil, errors.New("sealed plan snapshot was modified; manual recovery is required")
 		}
 		state.Plan.Revision++
 		state.Plan.Path = fmt.Sprintf("plans/%04d.md", state.Plan.Revision)
 		state.Plan.Snapshot = ""
 		state.Plan.SHA256 = ""
+		state.Plan.ContentSHA256 = ""
+		state.Plan.ManifestPath = ""
+		state.Plan.ManifestSnapshot = ""
 		state.Plan.SealedAt = nil
 		if err := writeFileAtomic(filepath.Join(s.changeDir(state.ChangeID), filepath.FromSlash(state.Plan.Path)), content, 0o644); err != nil {
 			return nil, err
@@ -364,19 +406,50 @@ func (s *Store) ensurePlanUnchanged(state *State) error {
 	if err != nil {
 		return err
 	}
-	if actual != state.Plan.SHA256 {
-		return fmt.Errorf("sealed plan changed: expected %s, found %s; run elgordo plan replan --reason <reason>", state.Plan.SHA256, actual)
+	if actual != state.Plan.ContentSHA256 {
+		return fmt.Errorf("sealed plan changed: expected %s, found %s; run elgordo plan replan --reason <reason>", state.Plan.ContentSHA256, actual)
 	}
 	if state.Plan.Snapshot == "" {
 		return errors.New("sealed plan snapshot is missing")
 	}
-	snapshot, err := os.ReadFile(filepath.Join(s.changeDir(state.ChangeID), filepath.FromSlash(state.Plan.Snapshot)))
+	changeDir := s.changeDir(state.ChangeID)
+	snapshot, err := os.ReadFile(filepath.Join(changeDir, filepath.FromSlash(state.Plan.Snapshot)))
 	if err != nil {
 		return err
 	}
 	snapshotSum := sha256.Sum256(snapshot)
-	if "sha256:"+hex.EncodeToString(snapshotSum[:]) != state.Plan.SHA256 {
+	if "sha256:"+hex.EncodeToString(snapshotSum[:]) != state.Plan.ContentSHA256 {
 		return errors.New("sealed plan snapshot was modified")
+	}
+	if state.Plan.ManifestSnapshot == "" {
+		return errors.New("sealed contract manifest snapshot is missing")
+	}
+	sealedData, err := os.ReadFile(filepath.Join(changeDir, filepath.FromSlash(state.Plan.ManifestSnapshot)))
+	if err != nil {
+		return err
+	}
+	var sealedManifest sealManifest
+	if err := json.Unmarshal(sealedData, &sealedManifest); err != nil {
+		return fmt.Errorf("invalid sealed contract manifest: %w", err)
+	}
+	sealedSum := sha256.Sum256(sealedData)
+	if "sha256:"+hex.EncodeToString(sealedSum[:]) != state.Plan.SHA256 {
+		return errors.New("sealed contract manifest was modified")
+	}
+	for _, entry := range sealedManifest.Files {
+		path, err := s.contractPath(state.ChangeID, entry.Path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("sealed contract file %s is unavailable: %w", entry.Path, err)
+		}
+		sum := sha256.Sum256(data)
+		actualHash := "sha256:" + hex.EncodeToString(sum[:])
+		if actualHash != entry.SHA256 {
+			return fmt.Errorf("sealed contract file %s changed: expected %s, found %s; run elgordo plan replan --reason <reason>", entry.Path, entry.SHA256, actualHash)
+		}
 	}
 	return nil
 }
@@ -388,6 +461,40 @@ func (s *Store) hashPlan(state *State) (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func (s *Store) hashContract(state *State) (string, error) {
+	manifest, _, err := s.buildSealManifest(state)
+	if err != nil {
+		return "", err
+	}
+	data, err := marshalManifest(manifest)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func (s *Store) contractPath(slug, rel string) (string, error) {
+	prefix := ".elgordo/changes/" + slug + "/"
+	if strings.HasPrefix(rel, prefix) {
+		inner := strings.TrimPrefix(rel, prefix)
+		clean := filepath.Clean(filepath.FromSlash(inner))
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return "", errors.New("sealed contract path escapes the change directory")
+		}
+		return filepath.Join(s.changeDir(slug), clean), nil
+	}
+	if !strings.HasPrefix(rel, "openspec/changes/"+slug+"/") {
+		return "", fmt.Errorf("sealed contract path %q is outside the change scope", rel)
+	}
+	inner := strings.TrimPrefix(rel, "openspec/changes/"+slug+"/")
+	clean := filepath.Clean(filepath.FromSlash(inner))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("sealed OpenSpec path escapes the change directory")
+	}
+	return filepath.Join(s.Root, "openspec", "changes", slug, clean), nil
 }
 
 func (s *Store) withLockState(fn func() (*State, error)) (*State, error) {
@@ -461,6 +568,9 @@ func (s *Store) loadState(slug string) (*State, error) {
 	if state.ChangeID != slug || !slugPattern.MatchString(state.ChangeID) {
 		return nil, errors.New("state change_id does not match the active change")
 	}
+	if !validPhase(state.Phase) {
+		return nil, fmt.Errorf("state contains an invalid phase %q", state.Phase)
+	}
 	expectedPlan := fmt.Sprintf("plans/%04d.md", state.Plan.Revision)
 	if state.Plan.Revision < 1 || state.Plan.Path != expectedPlan {
 		return nil, errors.New("state contains an invalid plan path")
@@ -469,6 +579,18 @@ func (s *Store) loadState(slug string) (*State, error) {
 		expectedSnapshot := fmt.Sprintf("plans/%04d.sealed.md", state.Plan.Revision)
 		if state.Plan.Snapshot != expectedSnapshot {
 			return nil, errors.New("state contains an invalid sealed plan snapshot path")
+		}
+	}
+	if state.Plan.ManifestSnapshot != "" {
+		expectedManifestSnapshot := fmt.Sprintf("plans/%04d.seal.json", state.Plan.Revision)
+		if state.Plan.ManifestSnapshot != expectedManifestSnapshot {
+			return nil, errors.New("state contains an invalid sealed contract manifest snapshot path")
+		}
+	}
+	if state.Plan.ManifestPath != "" {
+		expectedManifestPath := fmt.Sprintf("plans/%04d.contract.json", state.Plan.Revision)
+		if state.Plan.ManifestPath != expectedManifestPath {
+			return nil, errors.New("state contains an invalid contract manifest path")
 		}
 	}
 	return &state, nil
@@ -522,9 +644,17 @@ func (s *Store) changeDir(slug string) string { return filepath.Join(s.baseDir()
 func initialArtifacts(title string) map[string]string {
 	return map[string]string{
 		"intent.md":     "# Intent\n\n" + title + "\n\n# User Outcome\n\n# Constraints\n\n# Open Questions\n",
-		"plans/0001.md": "# Goal\n\n# Scope\n\n# Non-Goals\n\n# Assumptions\n\n# Work Units\n\n# Acceptance Criteria\n\n# Verification\n\n# Risks and Rollback\n",
-		"execution.md":  "# Summary\n\n# Files Changed\n\n# Commands Run\n\n# Tests\n\n# Deviations\n\n# Remaining Concerns\n",
-		"qa.md":         "# Verdict\n\n# Plan Conformance\n\n# Automated Checks\n\n# Manual Checks\n\n# Findings\n\n# Recommended Route\n",
+		"plans/0001.md": "# Goal\n\n# Scope\n\n# Non-Goals\n\n# Assumptions\n\n# Architecture\n\n# Work Units\n\n# Acceptance Criteria\n\n# Test Strategy\n\n# Verification\n\n# Risks and Rollback\n",
+		"execution.md":  "# Summary\n\n# Branch\n\n# Work Units\n\n# Files Changed\n\n# Commits\n\n# Commands Run\n\n# Tests\n\n# TDD Evidence\n\n# Documentation Impact\n\n# Deviations\n\n# Remaining Concerns\n",
+		"qa.md":         "# Verdict\n\n# Plan Conformance\n\n# OpenSpec Conformance\n\n# Scenario Traceability\n\n# TDD Evidence\n\n# Clean Code\n\n# Architecture Conformance\n\n# Automated Checks\n\n# Manual Checks\n\n# Documentation\n\n# Findings\n\n# Recommended Route\n",
+	}
+}
+
+func initialOpenSpecArtifacts(title string) map[string]string {
+	return map[string]string{
+		"proposal.md": "## Why\n\n" + title + "\n\n## What Changes\n\n- TODO: describe the user-visible change.\n\n## Capabilities\n\n- TODO: identify new or modified capabilities.\n\n## Impact\n\n- TODO: affected code, APIs, dependencies, or systems.\n",
+		"design.md":   "## Context\n\n## Goals / Non-Goals\n\n## Decisions\n\n## Risks / Trade-offs\n\n## Migration Plan\n\n## Open Questions\n",
+		"tasks.md":    "# Tasks\n\n- [ ] Define observable Given/When/Then scenarios.\n- [ ] Implement the first planned work unit with TDD evidence.\n",
 	}
 }
 
@@ -609,6 +739,18 @@ func containsPhase(phases []Phase, phase Phase) bool {
 		}
 	}
 	return false
+}
+
+func validPhase(phase Phase) bool {
+	return containsPhase([]Phase{
+		PhasePlanning,
+		PhasePlanReview,
+		PhaseExecuting,
+		PhaseCodeReview,
+		PhaseQA,
+		PhaseFinalReview,
+		PhaseDone,
+	}, phase)
 }
 
 func invalidPhase(actual Phase, expected ...Phase) error {

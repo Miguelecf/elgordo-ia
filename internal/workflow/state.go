@@ -17,11 +17,14 @@ const (
 )
 
 type Plan struct {
-	Revision int        `json:"revision"`
-	Path     string     `json:"path"`
-	Snapshot string     `json:"snapshot,omitempty"`
-	SHA256   string     `json:"sha256,omitempty"`
-	SealedAt *time.Time `json:"sealed_at,omitempty"`
+	Revision         int        `json:"revision"`
+	Path             string     `json:"path"`
+	Snapshot         string     `json:"snapshot,omitempty"`
+	SHA256           string     `json:"sha256,omitempty"`
+	ContentSHA256    string     `json:"content_sha256,omitempty"`
+	ManifestPath     string     `json:"manifest_path,omitempty"`
+	ManifestSnapshot string     `json:"manifest_snapshot,omitempty"`
+	SealedAt         *time.Time `json:"sealed_at,omitempty"`
 }
 
 type State struct {

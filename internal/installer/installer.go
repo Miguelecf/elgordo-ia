@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +28,7 @@ var assets embed.FS
 type Runner interface {
 	LookPath(file string) (string, error)
 	Run(ctx context.Context, name string, args ...string) error
+	Output(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
 type ExecRunner struct {
@@ -45,16 +47,21 @@ func (r ExecRunner) Run(ctx context.Context, name string, args ...string) error 
 	return cmd.Run()
 }
 
+func (r ExecRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).Output()
+}
+
 type Options struct {
-	Home                string
-	Version             string
-	AcceptEngramInstall bool
-	OverwriteUserAssets bool
-	Stdin               io.Reader
-	Stdout              io.Writer
-	Stderr              io.Writer
-	Runner              Runner
-	Now                 func() time.Time
+	Home                  string
+	Version               string
+	AcceptEngramInstall   bool
+	AcceptOpenSpecInstall bool
+	OverwriteUserAssets   bool
+	Stdin                 io.Reader
+	Stdout                io.Writer
+	Stderr                io.Writer
+	Runner                Runner
+	Now                   func() time.Time
 }
 
 type Manifest struct {
@@ -108,6 +115,9 @@ func Install(ctx context.Context, opts Options) error {
 		if err := ensureEngram(ctx, opts); err != nil {
 			return err
 		}
+		if err := ensureOpenSpec(ctx, opts); err != nil {
+			return err
+		}
 		if err := installAssetsUnlocked(opts); err != nil {
 			return err
 		}
@@ -119,6 +129,7 @@ func Install(ctx context.Context, opts Options) error {
 	}); err != nil {
 		return err
 	}
+	fmt.Fprintln(opts.Stdout, "Engram and OpenSpec verified.")
 	fmt.Fprintln(opts.Stdout, "ElGordo assets installed globally for OpenCode.")
 	fmt.Fprintln(opts.Stdout, "Restart OpenCode, open a Git repository, run `elgordo init`, then use `/eg`.")
 	return nil
@@ -365,12 +376,32 @@ func Doctor(ctx context.Context, opts Options) ([]Check, bool) {
 	opts = normalizeOptions(opts)
 	checks := []Check{}
 	ok := true
-	for _, command := range []string{"git", "opencode", "engram"} {
+	for _, command := range []string{"git", "opencode", "engram", "openspec"} {
 		if path, err := opts.Runner.LookPath(command); err == nil {
 			checks = append(checks, Check{Name: command, Status: "ok", Message: path})
 		} else {
 			checks = append(checks, Check{Name: command, Status: "error", Message: "not found in PATH"})
 			ok = false
+		}
+	}
+	if _, err := opts.Runner.LookPath("node"); err != nil {
+		checks = append(checks, Check{Name: "node", Status: "error", Message: "Node.js >=20.19.0 is required; not found in PATH"})
+		ok = false
+	} else if output, err := opts.Runner.Output(ctx, "node", "--version"); err != nil {
+		checks = append(checks, Check{Name: "node", Status: "error", Message: fmt.Sprintf("could not determine version: %v", err)})
+		ok = false
+	} else if !nodeVersionSupported(string(output)) {
+		checks = append(checks, Check{Name: "node", Status: "error", Message: fmt.Sprintf("Node.js >=20.19.0 is required; found %q", strings.TrimSpace(string(output)))})
+		ok = false
+	} else {
+		checks = append(checks, Check{Name: "node", Status: "ok", Message: strings.TrimSpace(string(output))})
+	}
+	if openSpecPath, err := opts.Runner.LookPath("openspec"); err == nil {
+		if err := opts.Runner.Run(ctx, openSpecPath, "--version"); err != nil {
+			checks = append(checks, Check{Name: "openspec-health", Status: "error", Message: err.Error()})
+			ok = false
+		} else {
+			checks = append(checks, Check{Name: "openspec-health", Status: "ok", Message: "version command completed"})
 		}
 	}
 	if _, err := opts.Runner.LookPath("engram"); err == nil {
@@ -430,6 +461,77 @@ func ensureEngram(ctx context.Context, opts Options) error {
 		return fmt.Errorf("engram doctor failed: %w", err)
 	}
 	return nil
+}
+
+func ensureOpenSpec(ctx context.Context, opts Options) error {
+	if _, err := opts.Runner.LookPath("node"); err != nil {
+		return errors.New("Node.js >=20.19.0 is required for OpenSpec; ElGordo will not install Node automatically. Install it from https://nodejs.org/ and retry")
+	}
+	output, err := opts.Runner.Output(ctx, "node", "--version")
+	if err != nil {
+		return fmt.Errorf("could not determine Node.js version for OpenSpec: %w", err)
+	}
+	if !nodeVersionSupported(string(output)) {
+		return fmt.Errorf("Node.js >=20.19.0 is required for OpenSpec; found %q. Upgrade Node from https://nodejs.org/ and retry", strings.TrimSpace(string(output)))
+	}
+
+	openSpecCommand, err := opts.Runner.LookPath("openspec")
+	if err == nil {
+		if err := opts.Runner.Run(ctx, openSpecCommand, "--version"); err != nil {
+			return fmt.Errorf("openspec --version failed: %w", err)
+		}
+		return nil
+	}
+	approved := opts.AcceptOpenSpecInstall
+	if !approved {
+		approved, err = confirm(opts, "OpenSpec is required for versioned specifications. Install @fission-ai/openspec now with npm?")
+		if err != nil {
+			return err
+		}
+	}
+	if !approved {
+		return errors.New("OpenSpec installation declined; install it manually with `npm install -g @fission-ai/openspec@1.5.0` and retry")
+	}
+	if _, err := opts.Runner.LookPath("npm"); err != nil {
+		return errors.New("npm is required to install OpenSpec; install it manually with `npm install -g @fission-ai/openspec@1.5.0` after installing npm")
+	}
+	if err := opts.Runner.Run(ctx, "npm", "install", "-g", "@fission-ai/openspec@1.5.0"); err != nil {
+		return fmt.Errorf("npm could not install OpenSpec: %w", err)
+	}
+	openSpecCommand, err = opts.Runner.LookPath("openspec")
+	if err != nil {
+		return errors.New("OpenSpec was installed but is not in PATH; add npm's global bin directory to PATH and retry")
+	}
+	if err := opts.Runner.Run(ctx, openSpecCommand, "--version"); err != nil {
+		return fmt.Errorf("openspec --version failed after installation: %w", err)
+	}
+	return nil
+}
+
+func nodeVersionSupported(value string) bool {
+	version := strings.TrimSpace(value)
+	version = strings.TrimPrefix(version, "v")
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	numbers := [3]int{}
+	for i, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, character := range part {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+		number, err := strconv.Atoi(part)
+		if err != nil || number < 0 {
+			return false
+		}
+		numbers[i] = number
+	}
+	return numbers[0] > 20 || (numbers[0] == 20 && (numbers[1] > 19 || (numbers[1] == 19 && numbers[2] >= 0)))
 }
 
 func installEngram(ctx context.Context, opts Options) (string, error) {

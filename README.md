@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/elgordoanime.png" alt="ElGordo IA mascot" width="220">
+</p>
+
 # ElGordo IA
 
 **Plan fat. Execute thin. Test without mercy.**

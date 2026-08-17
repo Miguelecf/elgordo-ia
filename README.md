@@ -2,7 +2,7 @@
 
 **Plan fat. Execute thin. Test without mercy.**
 
-ElGordo IA is a human-led engineering workflow for OpenCode. One agent plans, another implements, and another tries to break the result. The engineer owns product judgment, architecture, and every expensive gate.
+ElGordo IA is a human-led engineering workflow for OpenCode. ElGordo is the sole orchestrator and gate authority; OpenSpec is the versioned artifact engine. The engineer owns product judgment, architecture, and every approval gate.
 
 ## Install
 
@@ -16,16 +16,20 @@ The installer:
 
 1. Downloads the release artifact for your OS and architecture.
 2. Verifies its published SHA-256 checksum for transfer integrity.
-3. Checks OpenCode and Engram.
-4. Asks before installing Engram when it is missing.
-5. Installs managed agents, skills, and `/eg` globally.
-6. Adds Context7 without replacing unrelated OpenCode configuration.
+3. Requires OpenCode to be installed.
+4. Offers Engram when it is missing.
+5. Requires Node.js 20.19.0 or newer, but never installs Node.js.
+6. Offers the pinned OpenSpec CLI only after consent; use `--accept-openspec-install` for non-interactive consent.
+7. Installs managed agents, skills, and `/eg` globally.
+8. Adds Context7 without replacing unrelated OpenCode configuration.
 
 It never uses `sudo`. The binary is installed in `${ELGORDO_BIN_DIR:-$HOME/.local/bin}`.
 
 The checksum is downloaded from the same GitHub release and does not provide independent signature verification. Signed provenance is planned after v0.1.0.
 
 Restart OpenCode after installation.
+
+OpenSpec is installed through npm only as `@fission-ai/openspec@1.5.0`. `elgordo doctor` checks both Node.js and OpenSpec.
 
 ## Quick Path
 
@@ -43,10 +47,24 @@ Then run:
 
 `/eg` asks one necessary question at a time, inspects the repository and Engram before asking derivable questions, and routes exactly one phase agent according to CLI state.
 
+## Agent And Skill Contracts
+
+The installed source of truth is embedded in this repository:
+
+```text
+internal/installer/assets/opencode/agents/<agent>.md
+internal/installer/assets/opencode/skills/<skill>/SKILL.md
+internal/installer/assets/opencode/commands/eg.md
+```
+
+Agent-to-agent calls are declared in each agent frontmatter under `permission.task`. Agent-to-skill calls are declared under `permission.skill`; the agent body also requires the conductor to pass exact `SKILL.md` paths selected from `.atl/skill-registry.md`. Installer tests verify that every declared agent and skill reference resolves and that every embedded skill has a consumer. OpenCode loads these definitions globally after installation; restart OpenCode after syncing assets.
+
+`elgordo init` runs `openspec init --tools none`. This creates no `/opsx-*` commands or competing OpenSpec agents: `/eg` remains the sole human entrypoint.
+
 ## Workflow
 
 ```text
-Planner -> Human plan gate -> Executor -> Human code gate -> QA -> Human final gate
+Questioner -> Planner -> Human plan gate -> Executor -> Human code gate -> QA -> Human final gate
 ```
 
 Failures return explicitly:
@@ -54,7 +72,9 @@ Failures return explicitly:
 - Implementation defect -> Executor.
 - Broken scope or architecture -> Planner with a new plan revision.
 
-The approved plan is sealed by its exact SHA-256 bytes. Executor, QA, and final transitions fail if it changes.
+The conductor (`eg`) owns routing and may run bounded short iterations within a phase. It never crosses a review phase. `eg-questioner` only asks questions; `eg-planner`, `eg-executor`, and `eg-qa` return blockers to the conductor. Plan, code, and final approval are human gates.
+
+The plan seal covers a deterministic manifest of the plan and every Markdown OpenSpec artifact. Any post-seal modification requires a replan.
 
 ## Model Choice
 
@@ -68,9 +88,19 @@ ElGordo intentionally does not hardcode models. Select one with OpenCode `/model
 
 The workflow and evidence contract should make model capability less decisive than engineering context and human judgment.
 
-## Local State
+## Artifacts And Local State
 
-`elgordo init` creates local state and excludes it through `.git/info/exclude`:
+OpenSpec artifacts are committed:
+
+```text
+openspec/changes/<slug>/
+├── proposal.md
+├── specs/
+├── design.md
+└── tasks.md
+```
+
+`elgordo init` excludes local operational state through `.git/info/exclude`:
 
 ```text
 .elgordo/changes/<change>/
@@ -82,7 +112,7 @@ The workflow and evidence contract should make model capability less decisive th
 └── events.jsonl
 ```
 
-It also creates `.engram/config.json` so Engram resolves the repository deterministically and `.atl/skill-registry.md` as a delegator-only index of available project and user skills. All three directories are excluded through `.git/info/exclude` and are not committed by default.
+It also creates `.engram/config.json` so Engram resolves the repository deterministically and `.atl/skill-registry.md` as a delegator-only index of available project and user skills. `.elgordo/`, `.engram/`, and `.atl/` are local and excluded from Git by default.
 
 The registry prefers project skills over duplicate user skills, omits internal `sdd-*`, `_shared`, and `skill-registry` entries, and stores exact `SKILL.md` paths rather than generated summaries. Refresh it after skill changes:
 
@@ -104,6 +134,17 @@ elgordo final approve
 ```
 
 OpenCode permission prompts are the v0.1.0 human-presence boundary. They are not cryptographic identity proof.
+
+## Quality Policy
+
+- Use strict TDD for behavior changes unless an explicit exception is recorded.
+- Resolve architecture authority in this order: human, repository docs and `AGENTS.md`, ADRs, code, Engram, generic skills.
+- Name branches `feat|fix|refactor|docs|test|chore/<slug>`.
+- Make one Conventional Commit per complete work unit, including its code, tests, and documentation.
+- Treat a 400 LOC pull request as a warning to propose a split, not a universal blocking rule.
+- A human approves every push and pull request.
+
+OpenSpec scenarios use Given/When/Then Markdown. `eg-gherkin-verification` maps every scenario to an executed test or explicit manual evidence. Create executable `.feature` files only when the repository already has a BDD runner or the human explicitly selects one.
 
 ## Operations
 

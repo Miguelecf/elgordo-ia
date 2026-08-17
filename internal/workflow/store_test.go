@@ -82,6 +82,69 @@ func TestSealedPlanTamperingBlocksTransition(t *testing.T) {
 	}
 }
 
+func TestSealedOpenSpecArtifactTamperingBlocksTransition(t *testing.T) {
+	store := newTestStore(t)
+	state, err := store.StartChange("sealed-spec", "Sealed spec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PlanReady(); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := store.PlanHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SealPlan(hash); err != nil {
+		t.Fatal(err)
+	}
+	proposal := filepath.Join(store.Root, "openspec", "changes", state.ChangeID, "proposal.md")
+	if err := os.WriteFile(proposal, []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ExecutionReady(); err == nil || !strings.Contains(err.Error(), "sealed contract file") {
+		t.Fatalf("expected sealed OpenSpec artifact error, got %v", err)
+	}
+}
+
+func TestPlanHashIncludesOpenSpecArtifacts(t *testing.T) {
+	store := newTestStore(t)
+	state, err := store.StartChange("hash-spec", "Hash spec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.PlanHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	design := filepath.Join(store.Root, "openspec", "changes", state.ChangeID, "design.md")
+	if err := os.WriteFile(design, []byte("changed design\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.PlanHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("OpenSpec artifact did not change the contract hash")
+	}
+}
+
+func TestStartChangeCreatesOpenSpecArtifacts(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.StartChange("openspec-artifacts", "OpenSpec artifacts"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"proposal.md", "design.md", "tasks.md"} {
+		if _, err := os.Stat(filepath.Join(store.Root, "openspec", "changes", "openspec-artifacts", path)); err != nil {
+			t.Fatalf("OpenSpec artifact %s: %v", path, err)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(store.Root, "openspec", "changes", "openspec-artifacts", "specs")); err != nil || !info.IsDir() {
+		t.Fatalf("OpenSpec specs directory: %v", err)
+	}
+}
+
 func TestTamperedPlanCanRecoverThroughExplicitReplan(t *testing.T) {
 	store := newTestStore(t)
 	state, _ := store.StartChange("recover-plan", "Recover plan")
@@ -183,6 +246,25 @@ func TestRejectsTamperedStatePaths(t *testing.T) {
 	}
 	if _, err := store.ActiveState(); err == nil || !strings.Contains(err.Error(), "invalid slug") {
 		t.Fatalf("expected invalid slug, got %v", err)
+	}
+}
+
+func TestRejectsUnknownStatePhase(t *testing.T) {
+	store := newTestStore(t)
+	state, err := store.StartChange("bad-phase", "Bad phase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Phase = "NOT_A_PHASE"
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store.changeDir(state.ChangeID), "state.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActiveState(); err == nil || !strings.Contains(err.Error(), "invalid phase") {
+		t.Fatalf("expected invalid phase error, got %v", err)
 	}
 }
 

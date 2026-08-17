@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +68,33 @@ func TestSkillRegistryRefreshCommand(t *testing.T) {
 	}
 }
 
+func TestInitStopsWhenOpenSpecInitializationFails(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"init"}, Dependencies{
+		Version: "test",
+		Stdin:   strings.NewReader(""),
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+		Getwd:   func() (string, error) { return root, nil },
+		InitOpenSpec: func(string) error {
+			return errors.New("OpenSpec unavailable")
+		},
+	})
+	if code != 1 || !strings.Contains(stderr.String(), "initialize OpenSpec") {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".elgordo", "project.json")); !os.IsNotExist(err) {
+		t.Fatalf("workflow state created despite OpenSpec failure: %v", err)
+	}
+}
+
 func TestHumanGatesRejectTrailingArguments(t *testing.T) {
 	root := t.TempDir()
 	cmd := exec.Command("git", "init", "-q")
@@ -103,6 +131,9 @@ func runTestCLI(root string, args ...string) (int, string, string) {
 		Stdout:  &stdout,
 		Stderr:  &stderr,
 		Getwd:   func() (string, error) { return root, nil },
+		InitOpenSpec: func(root string) error {
+			return os.MkdirAll(filepath.Join(root, "openspec", "changes"), 0o755)
+		},
 	})
 	return code, stdout.String(), stderr.String()
 }

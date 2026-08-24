@@ -8,6 +8,55 @@
 
 ElGordo IA is a harness/workflow layer mounted on OpenCode. OpenCode owns the user experience; ElGordo IA owns orchestration, workflow state, gates, and plan integrity. The engineer owns product judgment, architecture, and every approval gate.
 
+> **En pocas palabras:** El Gordo IA convierte el agente principal de OpenCode en un orquestador de desarrollo. Tú sigues trabajando dentro de OpenCode y conversas con `elgordo-ia`; por debajo, el sistema organiza la planificación, la implementación, las revisiones y las aprobaciones humanas.
+
+## Conoce ElGordo IA
+
+Consulta la guía visual del proyecto para entender el flujo completo, los roles y la relación entre OpenCode y El Gordo IA:
+
+**[Abrir la guía visual de ElGordo IA](https://miguelecf.github.io/elgordo-ia/)**
+
+ElGordo IA no reemplaza OpenCode, no crea otra terminal y no te obliga a aprender una colección de comandos nuevos. OpenCode conserva la interfaz, la sesión, los modelos, las herramientas y la conversación. El Gordo IA añade la capa de workflow: decide cuándo planificar, pedir aprobación, ejecutar, revisar, probar o volver a una fase anterior.
+
+## Descargar ElGordo IA
+
+### Usar la versión estable
+
+Para la mayoría de usuarios, instala la última versión publicada:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Miguelecf/elgordo-ia/v0.1.0/scripts/install.sh | sh
+```
+
+### Descargar la rama `dev`
+
+La rama `dev` contiene el trabajo más reciente y puede cambiar antes de una nueva versión estable. Para descargarla:
+
+```bash
+git clone --branch dev --single-branch https://github.com/Miguelecf/elgordo-ia.git
+cd elgordo-ia
+```
+
+Si ya tienes el repositorio descargado:
+
+```bash
+git fetch origin
+git switch dev
+git pull --ff-only origin dev
+```
+
+Para comprobar en qué rama estás:
+
+```bash
+git branch --show-current
+```
+
+Debe mostrar:
+
+```text
+dev
+```
+
 ## Install
 
 Supported in v0.1.0: macOS, Linux, and WSL.
@@ -169,16 +218,24 @@ go build ./cmd/elgordo
 
 ### Install From Source
 
-Building locally produces the same runtime used by the installer:
+Building locally from `dev` produces the runtime used by the installer. Esta es la opción recomendada para probar los cambios más recientes de la rama de desarrollo:
 
 ```bash
-git clone https://github.com/Miguelecf/elgordo-ia
+git clone --branch dev --single-branch https://github.com/Miguelecf/elgordo-ia.git
 cd elgordo-ia
 go build -o elgordo ./cmd/elgordo
 ./elgordo install   # installs the private runtime and OpenCode assets
 ```
 
-See [`docs/v0.1.0-contract.md`](docs/v0.1.0-contract.md) for the authority and scope contract.
+Después, abre o reinicia OpenCode:
+
+```bash
+opencode
+```
+
+`elgordo-ia` aparecerá como el agente principal/orquestador. Selecciónalo y describe normalmente lo que quieres construir. No necesitas ejecutar `/eg` ni iniciar una sesión paralela fuera de OpenCode.
+
+Para conocer la autoridad, los límites y el contrato técnico, consulta [`docs/v0.1.0-contract.md`](docs/v0.1.0-contract.md).
 
 ## License
 

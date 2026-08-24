@@ -12,7 +12,7 @@ metadata:
 
 Every delegation includes:
 
-1. `phase` — current value from `elgordo status --json`.
+1. `phase` — current value from the private runtime status check.
 2. `change` — slug and title.
 3. `artifacts` — exact paths: `intent.md`, the active `plans/NNNN.md`, `execution.md` or `qa.md` as relevant, and `openspec/changes/<slug>/` when present.
 4. `skills` — exact `SKILL.md` paths selected from `.atl/skill-registry.md`.

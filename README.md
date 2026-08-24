@@ -6,7 +6,7 @@
 
 **Plan fat. Execute thin. Test without mercy.**
 
-ElGordo IA is a human-led engineering workflow for OpenCode. ElGordo is the sole orchestrator and gate authority; OpenSpec is the versioned artifact engine. The engineer owns product judgment, architecture, and every approval gate.
+ElGordo IA is a harness/workflow layer mounted on OpenCode. OpenCode owns the user experience; ElGordo IA owns orchestration, workflow state, gates, and plan integrity. The engineer owns product judgment, architecture, and every approval gate.
 
 ## Install
 
@@ -20,50 +20,76 @@ The installer:
 
 1. Downloads the release artifact for your OS and architecture.
 2. Verifies its published SHA-256 checksum for transfer integrity.
-3. Requires OpenCode to be installed.
-4. Offers Engram when it is missing.
-5. Requires Node.js 20.19.0 or newer, but never installs Node.js.
-6. Offers the pinned OpenSpec CLI only after consent; use `--accept-openspec-install` for non-interactive consent.
-7. Installs managed agents, skills, and `/eg` globally.
-8. Adds Context7 without replacing unrelated OpenCode configuration.
+3. Installs the private ElGordo runtime plus managed OpenCode assets.
+4. Configures OpenCode so `elgordo-ia` is the primary agent.
+5. Preserves unrelated OpenCode configuration and backs up any replaced value.
+6. Adds Context7 without replacing unrelated OpenCode configuration.
 
-It never uses `sudo`. The binary is installed in `${ELGORDO_BIN_DIR:-$HOME/.local/bin}`.
+It never uses `sudo`. The runtime is installed privately under the ElGordo config area, not on `PATH`.
 
-The checksum is downloaded from the same GitHub release and does not provide independent signature verification. Signed provenance is planned after v0.1.0.
+Start or restart OpenCode after installation.
 
-Restart OpenCode after installation.
-
-OpenSpec is installed through npm only as `@fission-ai/openspec@1.5.0`. `elgordo doctor` checks both Node.js and OpenSpec.
+OpenSpec remains the versioned artifact engine for workflow changes. It is bootstrapped lazily when the workflow first needs it.
 
 ## Quick Path
 
 ```bash
-cd your-project
-elgordo init
 opencode
 ```
 
-Then run:
-
-```text
-/eg add filtering to the order screen
-```
-
-`/eg` asks one necessary question at a time, inspects the repository and Engram before asking derivable questions, and routes exactly one phase agent according to CLI state.
+When OpenCode opens, `elgordo-ia` is the primary agent. Just describe the change you want in plain language.
 
 ## Agent And Skill Contracts
 
 The installed source of truth is embedded in this repository:
 
 ```text
-internal/installer/assets/opencode/agents/<agent>.md
+internal/installer/assets/opencode/agents/elgordo-ia.md
+internal/installer/assets/opencode/agents/eg-*.md
 internal/installer/assets/opencode/skills/<skill>/SKILL.md
-internal/installer/assets/opencode/commands/eg.md
 ```
 
-Agent-to-agent calls are declared in each agent frontmatter under `permission.task`. Agent-to-skill calls are declared under `permission.skill`; the agent body also requires the conductor to pass exact `SKILL.md` paths selected from `.atl/skill-registry.md`. Installer tests verify that every declared agent and skill reference resolves and that every embedded skill has a consumer. OpenCode loads these definitions globally after installation; restart OpenCode after syncing assets.
+Agent-to-agent calls are declared in each agent frontmatter under `permission.task`. Agent-to-skill calls are declared under `permission.skill`; the conductor passes exact `SKILL.md` paths selected from `.atl/skill-registry.md`. Installer tests verify that every declared agent and skill reference resolves and that every embedded skill has a consumer. OpenCode loads these definitions globally after installation.
 
-`elgordo init` runs `openspec init --tools none`. This creates no `/opsx-*` commands or competing OpenSpec agents: `/eg` remains the sole human entrypoint.
+The workflow bootstraps lazily. If a repository has no ElGordo state yet, the primary agent prepares it on demand.
+
+## Codebase Tour
+
+ElGordo is workflow code plus Markdown agent contracts. The Go runtime enforces the state machine and seals; the OpenCode assets define the orchestration roles. Read it in layers:
+
+```text
+cmd/elgordo/main.go            Private runtime entrypoint
+internal/cli/cli.go            Deterministic workflow protocol and gates
+internal/workflow/             Domain logic: state machine, plan seal, skill registry
+internal/installer/            Install, sync, uninstall, backups, global lock
+internal/installer/assets/opencode/
+  agents/elgordo-ia.md         Primary conductor agent
+  agents/eg-*.md               Hidden workflow roles
+  skills/*/SKILL.md            Embedded skills consumed through .atl/skill-registry.md
+openspec/changes/<slug>/       Versioned proposal, specs, design, tasks (committed)
+.elgordo/changes/<slug>/       intent, plans, execution, qa, state.json (local only)
+scripts/install.sh             The curl installer entrypoint
+```
+
+Two parallel worlds confuse newcomers; keep them apart:
+
+| Directory | What it holds | Committed |
+|---|---|---|
+| `openspec/changes/<slug>/` | Versioned artifacts: proposal, specs, design, tasks | Yes |
+| `.elgordo/changes/<slug>/` | Operational state: plans, reports, `state.json`, `events.jsonl` | No |
+
+Mechanisms worth understanding before touching anything:
+
+- **Explicit state machine**: `PLANNING -> PLAN_REVIEW -> EXECUTING -> CODE_REVIEW -> QA -> FINAL_REVIEW -> DONE`, defined in `internal/workflow/state.go`. Prompts never advance phases; the runtime does.
+- **Plan seal**: `internal/workflow/seal.go` builds a deterministic SHA-256 manifest over the plan and every OpenSpec Markdown artifact. Any post-seal edit blocks transitions until replanning.
+- **Role isolation**: each agent declares its writable paths in frontmatter. Contract tests in `internal/installer/installer_test.go` verify that the conductor, planner, executor, and QA stay within scope.
+
+### Contributor Path
+
+1. Read `AGENTS.md`, this README, and [`docs/v0.1.0-contract.md`](docs/v0.1.0-contract.md).
+2. Run `go test ./...`; read `internal/workflow/store_test.go` first because the tests document intended behavior better than prose.
+3. Trace one simple command end to end: `main.go` -> `cli.Run` -> `app.status` -> `workflow.Store`.
+4. Treat `internal/installer/assets/opencode/` as product code. Changing an agent or skill requires passing the installer contract tests.
 
 ## Workflow
 
@@ -76,9 +102,7 @@ Failures return explicitly:
 - Implementation defect -> Executor.
 - Broken scope or architecture -> Planner with a new plan revision.
 
-The conductor (`eg`) owns routing and may run bounded short iterations within a phase. It never crosses a review phase. `eg-questioner` only asks questions; `eg-planner`, `eg-executor`, and `eg-qa` return blockers to the conductor. Plan, code, and final approval are human gates.
-
-The plan seal covers a deterministic manifest of the plan and every Markdown OpenSpec artifact. Any post-seal modification requires a replan.
+`elgordo-ia` owns routing and may run bounded short iterations within a phase. It never crosses a review phase. `eg-questioner` only asks questions; `eg-planner`, `eg-executor`, and `eg-qa` return blockers to the conductor. Plan, code, and final approval are human gates.
 
 ## Model Choice
 
@@ -104,7 +128,7 @@ openspec/changes/<slug>/
 └── tasks.md
 ```
 
-`elgordo init` excludes local operational state through `.git/info/exclude`:
+ElGordo workflow state lives in `.elgordo/` and is excluded through `.git/info/exclude`:
 
 ```text
 .elgordo/changes/<change>/
@@ -116,28 +140,13 @@ openspec/changes/<slug>/
 └── events.jsonl
 ```
 
-It also creates `.engram/config.json` so Engram resolves the repository deterministically and `.atl/skill-registry.md` as a delegator-only index of available project and user skills. `.elgordo/`, `.engram/`, and `.atl/` are local and excluded from Git by default.
+It also creates `.engram/config.json` when needed and `.atl/skill-registry.md` as a delegator-only index of available project and user skills. `.elgordo/`, `.engram/`, and `.atl/` are local and excluded from Git by default.
 
-The registry prefers project skills over duplicate user skills, omits internal `sdd-*`, `_shared`, and `skill-registry` entries, and stores exact `SKILL.md` paths rather than generated summaries. Refresh it after skill changes:
-
-```bash
-elgordo skill-registry refresh --force
-```
+The registry prefers project skills over duplicate user skills, omits internal `sdd-*`, `_shared`, and `skill-registry` entries, and stores exact `SKILL.md` paths rather than generated summaries.
 
 ## Human Gates
 
-The conversational `/eg` entrypoint explains each gate. The underlying commands remain explicit:
-
-```bash
-elgordo plan hash
-elgordo plan seal --expect sha256:<hash>
-elgordo plan replan --reason "approved scope must change"
-elgordo code approve
-elgordo code reject --route execution --reason "..."
-elgordo final approve
-```
-
-OpenCode permission prompts are the v0.1.0 human-presence boundary. They are not cryptographic identity proof.
+OpenCode prompts the human at the workflow gates. The runtime verifies the transitions, seals, and state; the user stays in OpenCode.
 
 ## Quality Policy
 
@@ -148,28 +157,7 @@ OpenCode permission prompts are the v0.1.0 human-presence boundary. They are not
 - Treat a 400 LOC pull request as a warning to propose a split, not a universal blocking rule.
 - A human approves every push and pull request.
 
-OpenSpec scenarios use Given/When/Then Markdown. `eg-gherkin-verification` maps every scenario to an executed test or explicit manual evidence. Create executable `.feature` files only when the repository already has a BDD runner or the human explicitly selects one.
-
-## Operations
-
-```bash
-elgordo status --json
-elgordo skill-registry refresh --force
-elgordo doctor
-elgordo sync
-elgordo uninstall
-elgordo version
-```
-
-`uninstall` removes only unchanged ElGordo-managed assets. It preserves Engram, Context7, and any managed file modified by the user.
-
-## Recovery
-
-- Re-run `elgordo sync` after an interrupted asset update.
-- Run `elgordo doctor` to detect missing dependencies or managed assets.
-- ElGordo backs up replaced managed assets and the original OpenCode config under `~/.config/elgordo/backups/`.
-- A workflow lock is reclaimed when its recorded process no longer exists; malformed lock directories are reclaimable after ten minutes.
-- If an approved plan is edited accidentally, `elgordo plan replan --reason "..."` restores its sealed snapshot into a new revision.
+OpenSpec scenarios use Given/When/Then Markdown. `eg-gherkin-verification` maps every scenario to an executed test or explicit manual evidence. Create executable `.feature` files only when the repository already has a BDD runner or the human explicitly chooses one.
 
 ## Development
 
@@ -177,6 +165,17 @@ elgordo version
 go test ./...
 go vet ./...
 go build ./cmd/elgordo
+```
+
+### Install From Source
+
+Building locally produces the same runtime used by the installer:
+
+```bash
+git clone https://github.com/Miguelecf/elgordo-ia
+cd elgordo-ia
+go build -o elgordo ./cmd/elgordo
+./elgordo install   # installs the private runtime and OpenCode assets
 ```
 
 See [`docs/v0.1.0-contract.md`](docs/v0.1.0-contract.md) for the authority and scope contract.

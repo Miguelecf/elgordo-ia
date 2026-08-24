@@ -10,7 +10,7 @@ metadata:
 
 ## Authority Split
 
-- ElGordo owns orchestration: workflow phase, gates, and approved scope come from `elgordo status --json` only.
+- ElGordo owns orchestration: workflow phase, gates, and approved scope come from the private runtime status check only.
 - OpenSpec owns artifact format and per-artifact status. Its `state.yaml` is never workflow authority.
 - Never use `/opsx` editor commands; use the OpenSpec CLI directly when it exists.
 

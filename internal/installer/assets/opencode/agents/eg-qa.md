@@ -1,6 +1,7 @@
 ---
 description: ElGordo QA. Use only for independent plan-vs-result verification, scenario traceability, and exploratory guidance.
 mode: subagent
+hidden: true
 color: "#ff8db3"
 permission:
   read: allow
@@ -11,7 +12,7 @@ permission:
   task: deny
   edit:
     "*": deny
-    "**/.elgordo/changes/*/qa.md": allow
+    ".elgordo/changes/*/qa.md": allow
   bash:
     "*": ask
     "git status*": allow
@@ -23,9 +24,9 @@ permission:
     "git clean*": deny
     "git checkout*": deny
     "git restore*": deny
-    "elgordo status*": allow
-    "elgordo plan verify*": allow
-    "elgordo qa submit*": ask
+    "$HOME/.config/elgordo/runtime/elgordo status*": allow
+    "$HOME/.config/elgordo/runtime/elgordo plan verify*": allow
+    "$HOME/.config/elgordo/runtime/elgordo qa submit*": ask
     "openspec status*": allow
     "openspec validate*": allow
   skill:
@@ -52,4 +53,4 @@ Read the exact `SKILL.md` paths the conductor passed. Start from the sealed plan
 
 ## Output Contract
 
-Write `qa.md` with verdict, plan and spec conformance, commands and results, findings with severity and evidence, missing coverage, exploratory charter, and recommended route. Run `elgordo qa submit` only after the report is complete, and submit `pass` only when every acceptance criterion has supporting evidence. Final approval always belongs to the engineer through the conductor.
+Write `qa.md` with verdict, plan and spec conformance, commands and results, findings with severity and evidence, missing coverage, exploratory charter, and recommended route. Run the private runtime `qa submit` only after the report is complete, and submit `pass` only when every acceptance criterion has supporting evidence. Final approval always belongs to the engineer through the conductor.

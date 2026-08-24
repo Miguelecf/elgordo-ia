@@ -25,6 +25,8 @@ import (
 //go:embed all:assets/opencode
 var assets embed.FS
 
+const defaultAgentName = "elgordo-ia"
+
 type Runner interface {
 	LookPath(file string) (string, error)
 	Run(ctx context.Context, name string, args ...string) error
@@ -65,9 +67,14 @@ type Options struct {
 }
 
 type Manifest struct {
-	Version     string            `json:"version"`
-	InstalledAt time.Time         `json:"installed_at"`
-	Files       map[string]string `json:"files"`
+	Version     string               `json:"version"`
+	InstalledAt time.Time            `json:"installed_at"`
+	Files       map[string]string    `json:"files"`
+	OpenCode    *OpenCodeConfigState `json:"opencode,omitempty"`
+}
+
+type OpenCodeConfigState struct {
+	DefaultAgent *string `json:"default_agent,omitempty"`
 }
 
 type Check struct {
@@ -112,26 +119,22 @@ func Install(ctx context.Context, opts Options) error {
 		return errors.New("OpenCode is required; install it from https://opencode.ai/docs before continuing")
 	}
 	if err := withGlobalLock(opts, func() error {
-		if err := ensureEngram(ctx, opts); err != nil {
-			return err
-		}
-		if err := ensureOpenSpec(ctx, opts); err != nil {
-			return err
-		}
 		if err := installAssetsUnlocked(opts); err != nil {
+			return err
+		}
+		if err := configureOpenCodeDefaultsUnlocked(opts); err != nil {
 			return err
 		}
 		if err := configureContext7Unlocked(opts); err != nil {
 			fmt.Fprintf(opts.Stderr, "warning: Context7 was not configured automatically: %v\n", err)
-			fmt.Fprintln(opts.Stderr, "Add the Context7 remote MCP server manually, then run elgordo doctor.")
+			fmt.Fprintln(opts.Stderr, "Add the Context7 remote MCP server manually if you need library lookup, then run elgordo doctor.")
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintln(opts.Stdout, "Engram and OpenSpec verified.")
 	fmt.Fprintln(opts.Stdout, "ElGordo assets installed globally for OpenCode.")
-	fmt.Fprintln(opts.Stdout, "Restart OpenCode, open a Git repository, run `elgordo init`, then use `/eg`.")
+	fmt.Fprintln(opts.Stdout, "OpenCode is ready. Launch opencode; elgordo-ia is available as the primary agent.")
 	return nil
 }
 
@@ -141,6 +144,9 @@ func Sync(opts Options) error {
 		if err := installAssetsUnlocked(opts); err != nil {
 			return err
 		}
+		if err := configureOpenCodeDefaultsUnlocked(opts); err != nil {
+			return err
+		}
 		if err := configureContext7Unlocked(opts); err != nil {
 			fmt.Fprintf(opts.Stderr, "warning: Context7 was not synchronized: %v\n", err)
 		}
@@ -148,7 +154,7 @@ func Sync(opts Options) error {
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintln(opts.Stdout, "ElGordo managed assets synchronized.")
+	fmt.Fprintln(opts.Stdout, "ElGordo managed assets synchronized for OpenCode.")
 	return nil
 }
 
@@ -163,7 +169,10 @@ func installAssetsUnlocked(opts Options) error {
 	if err != nil {
 		return fmt.Errorf("load managed asset manifest: %w", err)
 	}
-	newManifest := Manifest{Version: opts.Version, InstalledAt: opts.Now(), Files: map[string]string{}}
+	newManifest := Manifest{Version: opts.Version, InstalledAt: opts.Now(), Files: map[string]string{}, OpenCode: nil}
+	if manifest != nil && manifest.OpenCode != nil {
+		newManifest.OpenCode = manifest.OpenCode
+	}
 	var paths []string
 	err = fs.WalkDir(assets, "assets/opencode", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -290,6 +299,11 @@ func ConfigureContext7(opts Options) error {
 	return withGlobalLock(opts, func() error { return configureContext7Unlocked(opts) })
 }
 
+func ConfigureOpenCodeDefaults(opts Options) error {
+	opts = normalizeOptions(opts)
+	return withGlobalLock(opts, func() error { return configureOpenCodeDefaultsUnlocked(opts) })
+}
+
 func configureContext7Unlocked(opts Options) error {
 	path := filepath.Join(opts.Home, ".config", "opencode", "opencode.json")
 	config := map[string]any{"$schema": "https://opencode.ai/config.json"}
@@ -323,6 +337,93 @@ func configureContext7Unlocked(opts Options) error {
 		"type":    "remote",
 		"url":     "https://mcp.context7.com/mcp",
 		"enabled": true,
+	}
+	return writeJSONAtomicMode(path, config, mode)
+}
+
+func configureOpenCodeDefaultsUnlocked(opts Options) error {
+	path := filepath.Join(opts.Home, ".config", "opencode", "opencode.json")
+	config := map[string]any{"$schema": "https://opencode.ai/config.json"}
+	mode := fs.FileMode(0o600)
+	var original []byte
+	var previousDefault *string
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			return fmt.Errorf("existing %s is not strict JSON: %w", path, err)
+		}
+		if info, statErr := os.Stat(path); statErr == nil {
+			mode = info.Mode().Perm()
+		}
+		original = data
+		if existing, ok := config["default_agent"].(string); ok {
+			if existing == defaultAgentName {
+				return nil
+			}
+			if existing != "" {
+				previousDefault = &existing
+				approved, err := confirm(opts, fmt.Sprintf("OpenCode already uses %q as the default agent. Set %q as the default agent for ElGordo IA?", existing, defaultAgentName))
+				if err != nil {
+					return err
+				}
+				if !approved {
+					fmt.Fprintf(opts.Stderr, "warning: kept existing OpenCode default_agent %q\n", existing)
+					return nil
+				}
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if original != nil {
+		if err := backupFile(opts, "opencode.json", original, mode); err != nil {
+			return fmt.Errorf("backup OpenCode config: %w", err)
+		}
+	}
+	config["default_agent"] = defaultAgentName
+	if err := writeJSONAtomicMode(path, config, mode); err != nil {
+		return err
+	}
+	manifest, err := loadManifest(filepath.Join(opts.Home, ".config", "opencode"))
+	if err != nil {
+		return err
+	}
+	if manifest != nil {
+		manifest.OpenCode = &OpenCodeConfigState{DefaultAgent: previousDefault}
+		if err := writeJSONAtomic(filepath.Join(opts.Home, ".config", "opencode", "elgordo", "manifest.json"), manifest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreOpenCodeDefaultsUnlocked(opts Options, manifest *Manifest) error {
+	if manifest == nil || manifest.OpenCode == nil {
+		return nil
+	}
+	path := filepath.Join(opts.Home, ".config", "opencode", "opencode.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	config := map[string]any{"$schema": "https://opencode.ai/config.json"}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("existing %s is not strict JSON: %w", path, err)
+	}
+	current, _ := config["default_agent"].(string)
+	if current != defaultAgentName {
+		return nil
+	}
+	mode := fs.FileMode(0o600)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	if manifest.OpenCode.DefaultAgent == nil {
+		delete(config, "default_agent")
+	} else {
+		config["default_agent"] = *manifest.OpenCode.DefaultAgent
 	}
 	return writeJSONAtomicMode(path, config, mode)
 }
@@ -365,10 +466,13 @@ func uninstallUnlocked(opts Options) error {
 	if err := os.Remove(filepath.Join(configRoot, "elgordo", "manifest.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if err := restoreOpenCodeDefaultsUnlocked(opts, manifest); err != nil {
+		return err
+	}
 	for _, path := range preserved {
 		fmt.Fprintf(opts.Stderr, "preserved modified asset: %s\n", path)
 	}
-	fmt.Fprintln(opts.Stdout, "ElGordo managed assets removed. Engram and Context7 configuration were preserved.")
+	fmt.Fprintln(opts.Stdout, "ElGordo managed assets removed. OpenCode configuration was restored when needed.")
 	return nil
 }
 

@@ -17,7 +17,7 @@ Conductor only. Governs how far the workflow advances without engineer input.
 - Autopilot exists only inside work phases: `PLANNING`, `EXECUTING`, `QA`.
 - Always stop at every review phase (`PLAN_REVIEW`, `CODE_REVIEW`, `FINAL_REVIEW`) and before every human gate command.
 - Stop on any CLI failure, any subagent `needs_human`, or any delegation that produces no new artifact or evidence (no-progress stop).
-- Keep iterations short: one delegation, then re-read `elgordo status --json` before the next.
+- Keep iterations short: one delegation, then re-read the private runtime status check before the next.
 - Never run a gate command to keep momentum; never let a producer review its own work.
 
 ## Budget

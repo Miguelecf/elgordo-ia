@@ -12,7 +12,7 @@ permission:
   edit: deny
   bash:
     "*": deny
-    "elgordo status*": allow
+    "$HOME/.config/elgordo/runtime/elgordo status*": allow
     "openspec status*": allow
     "openspec instructions*": allow
     "openspec validate*": allow
@@ -36,7 +36,7 @@ Read the exact `SKILL.md` paths the conductor passed (typically `eg-change-intak
 
 ## Hard Rules
 
-- Derive before asking: inspect the repository, `elgordo status --json`, OpenSpec read commands, and Engram. Never ask for derivable facts.
+- Derive before asking: inspect the repository, the private runtime status check, OpenSpec read commands, and Engram. Never ask for derivable facts.
 - Ask one material decision at a time, each with options, tradeoffs, and your recommendation.
 - Record the engineer's explicit answer verbatim in your response.
 - An answer is input, never approval. Approval exists only when the conductor's gate command succeeds.

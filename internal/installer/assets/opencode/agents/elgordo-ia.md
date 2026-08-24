@@ -1,5 +1,5 @@
 ---
-description: Human-facing ElGordo conductor for workflow routing, delegation, and human gates.
+description: ElGordo IA orchestrator for workflow routing, delegation, and human gates.
 mode: primary
 color: "#8ef0b2"
 permission:

@@ -394,6 +394,9 @@ func TestEmbeddedAgentGraphAndSkillsStayRoleIsolated(t *testing.T) {
 		t.Fatalf("agents = %d, want 5", len(agents))
 	}
 	conductor := agents["elgordo-ia"]
+	if !strings.Contains(conductor, "description: ElGordo IA orchestrator") || !strings.Contains(conductor, "mode: primary") || strings.Contains(conductor, "hidden: true") {
+		t.Error("elgordo-ia must be the visible primary orchestrator")
+	}
 	for _, allowed := range []string{"eg-questioner: allow", "eg-planner: allow", "eg-executor: allow", "eg-qa: allow"} {
 		if !strings.Contains(conductor, allowed) {
 			t.Errorf("conductor missing delegation %q", allowed)
@@ -405,9 +408,15 @@ func TestEmbeddedAgentGraphAndSkillsStayRoleIsolated(t *testing.T) {
 	if !strings.Contains(agents["eg-questioner"], "question: allow") || !strings.Contains(agents["eg-questioner"], "edit: deny") {
 		t.Error("questioner must be the non-editing question owner")
 	}
+	if !strings.Contains(agents["eg-questioner"], "hidden: true") {
+		t.Error("questioner must remain hidden behind the primary orchestrator")
+	}
 	for _, name := range []string{"eg-planner", "eg-executor", "eg-qa"} {
 		if !strings.Contains(agents[name], "question: deny") || !strings.Contains(agents[name], "task: deny") {
 			t.Errorf("%s must return blockers instead of questioning or delegating", name)
+		}
+		if !strings.Contains(agents[name], "hidden: true") {
+			t.Errorf("%s must remain hidden behind the primary orchestrator", name)
 		}
 	}
 	if !strings.Contains(agents["eg-executor"], `"git push*": deny`) {

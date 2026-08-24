@@ -1,6 +1,7 @@
 ---
 description: ElGordo Questioner. Use for intake, SDD init choices, and presenting review gates to the engineer.
 mode: subagent
+hidden: true
 color: "#c4a7ff"
 permission:
   read: allow

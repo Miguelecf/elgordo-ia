@@ -20,7 +20,7 @@ If you are an AI agent and receive this repository URL, for example `https://git
 4. With approval and an interactive terminal, run exactly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Miguelecf/elgordo-ia/v0.1.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Miguelecf/elgordo-ia/v0.1.1/scripts/install.sh | sh
 ```
 
 5. Do not expect `elgordo` on `PATH`: its runtime is private. Verify that the agent was installed, then ask the user to open or restart OpenCode. Do not open an interactive OpenCode session yourself:
@@ -84,7 +84,7 @@ ElGordo IA does not replace OpenCode, create another terminal, or require a sepa
 For most users, install the latest published release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Miguelecf/elgordo-ia/v0.1.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Miguelecf/elgordo-ia/v0.1.1/scripts/install.sh | sh
 ```
 
 ### Download The `dev` Branch
@@ -118,10 +118,10 @@ dev
 
 ## Install
 
-Supported in v0.1.0: macOS, Linux, and WSL.
+Supported in v0.1.1: macOS, Linux, and WSL.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Miguelecf/elgordo-ia/v0.1.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Miguelecf/elgordo-ia/v0.1.1/scripts/install.sh | sh
 ```
 
 The installer:

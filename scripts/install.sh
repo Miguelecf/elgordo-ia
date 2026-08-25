@@ -2,7 +2,7 @@
 set -eu
 
 REPO="Miguelecf/elgordo-ia"
-BIN_DIR="${ELGORDO_BIN_DIR:-$HOME/.local/bin}"
+RUNTIME_DIR="${ELGORDO_RUNTIME_DIR:-$HOME/.config/elgordo/runtime}"
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t elgordo)"
 staged_binary=""
 previous_binary=""
@@ -12,10 +12,10 @@ installation_complete=0
 cleanup() {
   if [ "$installation_complete" -ne 1 ]; then
     if [ "$new_binary_installed" -eq 1 ]; then
-      rm -f "$BIN_DIR/elgordo"
+      rm -f "$RUNTIME_DIR/elgordo"
     fi
     if [ -n "$previous_binary" ] && [ -e "$previous_binary" ]; then
-      mv "$previous_binary" "$BIN_DIR/elgordo"
+      mv "$previous_binary" "$RUNTIME_DIR/elgordo"
     fi
     if [ -n "$staged_binary" ]; then
       rm -f "$staged_binary"
@@ -31,7 +31,7 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 if [ ! -r /dev/tty ]; then
-  echo "error: installation requires an interactive terminal for explicit dependency consent" >&2
+  echo "error: installation requires an interactive terminal to preserve existing OpenCode configuration" >&2
   echo "Download the release archive manually when running without a TTY." >&2
   exit 1
 fi
@@ -102,26 +102,23 @@ fi
 tar -xzf "$TMP_DIR/$archive" -C "$TMP_DIR" "elgordo"
 chmod +x "$TMP_DIR/elgordo"
 
-mkdir -p "$BIN_DIR"
-staged_binary="$BIN_DIR/.elgordo.new.$$"
-previous_binary="$BIN_DIR/.elgordo.previous.$$"
+mkdir -p "$RUNTIME_DIR"
+staged_binary="$RUNTIME_DIR/.elgordo.new.$$"
+previous_binary="$RUNTIME_DIR/.elgordo.previous.$$"
 cp "$TMP_DIR/elgordo" "$staged_binary"
 chmod +x "$staged_binary"
-if [ -e "$BIN_DIR/elgordo" ]; then
-  mv "$BIN_DIR/elgordo" "$previous_binary"
+if [ -e "$RUNTIME_DIR/elgordo" ]; then
+  mv "$RUNTIME_DIR/elgordo" "$previous_binary"
 fi
-mv "$staged_binary" "$BIN_DIR/elgordo"
+mv "$staged_binary" "$RUNTIME_DIR/elgordo"
 new_binary_installed=1
 
-if ! "$BIN_DIR/elgordo" install </dev/tty; then
+if ! "$RUNTIME_DIR/elgordo" install </dev/tty; then
   echo "error: ElGordo setup failed; the previous binary was restored" >&2
   exit 1
 fi
 rm -f "$previous_binary"
 installation_complete=1
 
-echo "Installed elgordo to $BIN_DIR/elgordo"
-case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *) echo "Add $BIN_DIR to PATH, then restart your shell and OpenCode." ;;
-esac
+echo "Installed ElGordo runtime to $RUNTIME_DIR/elgordo"
+echo "OpenCode is ready. Start opencode; elgordo-ia is available as the primary agent."

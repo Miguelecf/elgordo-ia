@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>ElGordo IA - Orchestrator</title>
+  <title>ElGordo IA - OpenCode Harness</title>
   <style>
     :root {
       --bg: #0b090e;
@@ -112,7 +112,7 @@
       <p class="label">human-led engineering workflow</p>
       <h1>ElGordo IA</h1>
       <p><strong>Plan fat. Execute thin. Test without mercy.</strong></p>
-      <p>OpenCode conversa. ElGordo gobierna el estado. OpenSpec versiona el contrato. El humano decide en cada punto importante.</p>
+      <p>OpenCode conversa. ElGordo IA gobierna el workflow. OpenSpec versiona el contrato. El humano decide en cada punto importante.</p>
     </div>
   </header>
 
@@ -121,16 +121,17 @@
       <p class="label">the_flow</p>
       <h2>Una ruta. Tres compuertas humanas.</h2>
       <div class="flow" aria-label="Flujo del orquestador">
-        <span class="node agent">/eg</span><span class="arrow">-&gt;</span>
-        <span class="node agent">plan</span><span class="arrow">-&gt;</span>
+        <span class="node agent">OpenCode</span><span class="arrow">-&gt;</span>
+        <span class="node agent">elgordo-ia</span><span class="arrow">-&gt;</span>
+        <span class="node agent">planner</span><span class="arrow">-&gt;</span>
         <span class="node gate">human: seal</span><span class="arrow">-&gt;</span>
-        <span class="node agent">execute</span><span class="arrow">-&gt;</span>
+        <span class="node agent">executor</span><span class="arrow">-&gt;</span>
         <span class="node gate">human: review</span><span class="arrow">-&gt;</span>
         <span class="node agent">QA</span><span class="arrow">-&gt;</span>
         <span class="node gate">human: approve</span><span class="arrow">-&gt;</span>
         <span class="node done">done</span>
       </div>
-      <p>El conductor consulta <code>elgordo status --json</code>, delega un solo rol segun la fase y se detiene en cada compuerta. Un defecto vuelve a ejecucion; un problema de alcance vuelve a planificacion.</p>
+      <p>El conductor vive dentro de OpenCode, delega un solo rol segun la fase y se detiene en cada compuerta. Un defecto vuelve a ejecucion; un problema de alcance vuelve a planificacion.</p>
     </section>
 
     <section>
@@ -138,7 +139,7 @@
       <h2>Una responsabilidad por capa.</h2>
       <div class="roles">
         <div class="role"><b>Human</b> <span>requisitos, arquitectura y aprobaciones.</span></div>
-        <div class="role"><b>ElGordo</b> <span>fases, transiciones y sellos.</span></div>
+        <div class="role"><b>ElGordo IA</b> <span>fases, transiciones y sellos.</span></div>
         <div class="role"><b>OpenSpec</b> <span>propuesta, diseno, tareas y specs versionados.</span></div>
         <div class="role"><b>Engram</b> <span>continuidad, nunca autoridad.</span></div>
       </div>
@@ -147,11 +148,9 @@
     <section>
       <p class="label">the_contract</p>
       <h2>Lo aprobado queda sellado.</h2>
-      <p>Antes de ejecutar, el plan y los Markdown de OpenSpec se convierten en un manifest SHA-256. Si cualquiera de ellos cambia, la CLI bloquea la siguiente transicion: se requiere <code>replan</code>.</p>
-      <div class="terminal"><span class="prompt">$</span> elgordo plan hash
-<span class="comment"># revisa el contrato</span>
-<span class="prompt">$</span> elgordo plan seal --expect sha256:&lt;hash&gt;
-<span class="comment"># ejecucion habilitada</span></div>
+      <p>Antes de ejecutar, el plan y los Markdown de OpenSpec se convierten en un manifest SHA-256. Si cualquiera de ellos cambia, el runtime bloquea la siguiente transicion: se requiere replanning.</p>
+      <div class="terminal"><span class="comment"># el runtime valida el contrato y la compuerta humana</span>
+<span class="comment"># OpenCode sigue siendo la interfaz visible</span></div>
     </section>
 
     <section>

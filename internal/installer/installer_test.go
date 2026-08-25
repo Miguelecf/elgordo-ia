@@ -57,7 +57,7 @@ func testOptions(t *testing.T) Options {
 		AcceptEngramInstall:   true,
 		AcceptOpenSpecInstall: true,
 		OverwriteUserAssets:   true,
-		Runner:                &fakeRunner{paths: map[string]string{"opencode": "/bin/opencode", "engram": "/bin/engram", "node": "/bin/node", "openspec": "/bin/openspec"}, fail: map[string]error{}, outputs: map[string][]byte{"node --version": []byte("v20.19.0\n")}},
+		Runner:                &fakeRunner{paths: map[string]string{"opencode": "/bin/opencode", "engram": "/bin/engram", "node": "/bin/node", "openspec": "/bin/openspec"}, fail: map[string]error{}, outputs: map[string][]byte{"node --version": []byte("v20.19.0\n"), "/bin/openspec --version": []byte("1.5.0\n")}},
 		Now:                   func() time.Time { return time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC) },
 	}
 }
@@ -66,6 +66,12 @@ func TestInstallAssetsAndUninstall(t *testing.T) {
 	opts := testOptions(t)
 	if err := InstallAssets(opts); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.Home, ".config", "opencode", "agents", "elgordo-ia.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.Home, ".config", "opencode", "commands", "eg.md")); !os.IsNotExist(err) {
+		t.Fatalf("legacy command still installed: %v", err)
 	}
 	manifestPath := filepath.Join(opts.Home, ".config", "opencode", "elgordo", "manifest.json")
 	data, err := os.ReadFile(manifestPath)
@@ -83,7 +89,7 @@ func TestInstallAssetsAndUninstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(opts.Home, ".config", "opencode", "commands", "eg.md")); !os.IsNotExist(err) {
-		t.Fatalf("managed command remains: %v", err)
+		t.Fatalf("legacy command remains: %v", err)
 	}
 }
 
@@ -109,7 +115,7 @@ func TestUninstallPreservesModifiedAsset(t *testing.T) {
 	if err := InstallAssets(opts); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(opts.Home, ".config", "opencode", "commands", "eg.md")
+	path := filepath.Join(opts.Home, ".config", "opencode", "agents", "elgordo-ia.md")
 	if err := os.WriteFile(path, []byte("user edit\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -194,62 +200,155 @@ func TestInstallRejectsSymlinkedManagedDirectory(t *testing.T) {
 	}
 }
 
-func TestInstallRunsEngramSetup(t *testing.T) {
+func TestInstallConfiguresOpenCodeDefaultsWithoutOptionalDependencies(t *testing.T) {
 	opts := testOptions(t)
 	runner := opts.Runner.(*fakeRunner)
+	delete(runner.paths, "engram")
+	delete(runner.paths, "node")
+	delete(runner.paths, "openspec")
 	if err := Install(context.Background(), opts); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(runner.runs, "\n")
-	if !strings.Contains(joined, "/bin/engram setup opencode") || !strings.Contains(joined, "/bin/engram doctor --json") || !strings.Contains(joined, "node --version") || !strings.Contains(joined, "/bin/openspec --version") {
-		t.Fatalf("missing dependency checks: %s", joined)
+	if strings.Contains(joined, "engram") || strings.Contains(joined, "openspec") || strings.Contains(joined, "node --version") {
+		t.Fatalf("install should not require optional deps: %s", joined)
 	}
-}
-
-func TestInstallDeclinesOpenSpecInstall(t *testing.T) {
-	opts := testOptions(t)
-	opts.AcceptOpenSpecInstall = false
-	opts.Stdin = strings.NewReader("no\n")
-	runner := opts.Runner.(*fakeRunner)
-	delete(runner.paths, "openspec")
-	if err := Install(context.Background(), opts); err == nil || !strings.Contains(err.Error(), "OpenSpec installation declined") {
-		t.Fatalf("expected declined installation error, got %v", err)
-	}
-	if strings.Contains(strings.Join(runner.runs, "\n"), "npm install -g") {
-		t.Fatalf("npm ran after declined installation: %s", runner.runs)
-	}
-}
-
-func TestInstallAcceptsOpenSpecInstall(t *testing.T) {
-	opts := testOptions(t)
-	opts.AcceptOpenSpecInstall = false
-	opts.Stdin = strings.NewReader("yes\n")
-	runner := opts.Runner.(*fakeRunner)
-	delete(runner.paths, "openspec")
-	runner.paths["npm"] = "/bin/npm"
-	runner.installPaths = map[string]map[string]string{"npm install -g @fission-ai/openspec@1.5.0": {"openspec": "/bin/openspec"}}
-	if err := Install(context.Background(), opts); err != nil {
+	data, err := os.ReadFile(filepath.Join(opts.Home, ".config", "opencode", "opencode.json"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(runner.runs, "\n"), "npm install -g @fission-ai/openspec@1.5.0") {
-		t.Fatalf("missing exact npm install command: %s", runner.runs)
+	if !bytes.Contains(data, []byte(`"default_agent": "elgordo-ia"`)) {
+		t.Fatalf("default agent missing from config: %s", data)
 	}
 }
 
-func TestInstallRejectsMissingOrUnsupportedNode(t *testing.T) {
-	for name, version := range map[string]string{"missing": "", "unsupported": "v20.18.0\n", "malformed": "version 20\n"} {
-		t.Run(name, func(t *testing.T) {
-			opts := testOptions(t)
-			runner := opts.Runner.(*fakeRunner)
-			if name == "missing" {
-				delete(runner.paths, "node")
-			} else {
-				runner.outputs["node --version"] = []byte(version)
-			}
-			if err := Install(context.Background(), opts); err == nil || !strings.Contains(err.Error(), "Node.js >=20.19.0") {
-				t.Fatalf("expected Node version error, got %v", err)
-			}
-		})
+func TestEnsureWorkflowDependenciesInstallsApprovedDependencies(t *testing.T) {
+	opts := testOptions(t)
+	runner := opts.Runner.(*fakeRunner)
+	delete(runner.paths, "engram")
+	delete(runner.paths, "openspec")
+	runner.paths["go"] = "/bin/go"
+	runner.paths["npm"] = "/bin/npm"
+	runner.installPaths = map[string]map[string]string{
+		"go install github.com/Gentleman-Programming/engram/cmd/engram@v1.20.0": {"engram": "/bin/engram"},
+		"npm install -g @fission-ai/openspec@1.5.0":                             {"openspec": "/bin/openspec"},
+	}
+
+	if err := EnsureWorkflowDependencies(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.runs, "\n")
+	for _, command := range []string{
+		"go install github.com/Gentleman-Programming/engram/cmd/engram@v1.20.0",
+		"/bin/engram setup opencode",
+		"/bin/engram doctor --json",
+		"node --version",
+		"npm install -g @fission-ai/openspec@1.5.0",
+		"/bin/openspec --version",
+	} {
+		if !strings.Contains(joined, command) {
+			t.Errorf("missing command %q in %s", command, joined)
+		}
+	}
+}
+
+func TestEnsureWorkflowDependenciesStopsWhenOpenSpecInstallIsDeclined(t *testing.T) {
+	opts := testOptions(t)
+	opts.Stdin = strings.NewReader("no\n")
+	opts.AcceptOpenSpecInstall = false
+	delete(opts.Runner.(*fakeRunner).paths, "openspec")
+
+	err := EnsureWorkflowDependencies(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "OpenSpec installation declined") {
+		t.Fatalf("expected declined OpenSpec error, got %v", err)
+	}
+	for _, command := range opts.Runner.(*fakeRunner).runs {
+		if strings.Contains(command, "npm install") {
+			t.Fatalf("OpenSpec was installed after decline: %s", command)
+		}
+	}
+}
+
+func TestEnsureWorkflowDependenciesRejectsUnpinnedOpenSpec(t *testing.T) {
+	opts := testOptions(t)
+	opts.Stdin = strings.NewReader("no\n")
+	opts.AcceptOpenSpecInstall = false
+	opts.Runner.(*fakeRunner).outputs["/bin/openspec --version"] = []byte("1.4.0\n")
+
+	err := EnsureWorkflowDependencies(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "OpenSpec installation declined") {
+		t.Fatalf("expected declined pinned OpenSpec error, got %v", err)
+	}
+	for _, command := range opts.Runner.(*fakeRunner).runs {
+		if strings.Contains(command, "npm install") {
+			t.Fatalf("OpenSpec was updated after decline: %s", command)
+		}
+	}
+}
+
+func TestEnsureWorkflowDependenciesRequiresSupportedNode(t *testing.T) {
+	opts := testOptions(t)
+	delete(opts.Runner.(*fakeRunner).paths, "node")
+
+	err := EnsureWorkflowDependencies(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "Node.js >=20.19.0 is required") {
+		t.Fatalf("expected Node.js requirement error, got %v", err)
+	}
+}
+
+func TestConfigureOpenCodeDefaultsRestoresPreviousSelection(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"default_agent":"build","share":"disabled"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := testOptions(t)
+	opts.Home = home
+	opts.Stdin = strings.NewReader("yes\n")
+	if err := InstallAssets(opts); err != nil {
+		t.Fatal(err)
+	}
+	if err := ConfigureOpenCodeDefaults(opts); err != nil {
+		t.Fatal(err)
+	}
+	backups, err := filepath.Glob(filepath.Join(home, ".config", "elgordo", "backups", "*", "opencode.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) == 0 {
+		t.Fatal("expected an OpenCode config backup")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"default_agent": "elgordo-ia"`)) || !bytes.Contains(data, []byte(`"share": "disabled"`)) {
+		t.Fatalf("config not updated as expected: %s", data)
+	}
+	manifestPath := filepath.Join(home, ".config", "opencode", "elgordo", "manifest.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.OpenCode == nil || manifest.OpenCode.DefaultAgent == nil || *manifest.OpenCode.DefaultAgent != "build" {
+		t.Fatalf("previous default agent not recorded: %#v", manifest.OpenCode)
+	}
+	if err := Uninstall(opts); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(restored, []byte(`"default_agent": "build"`)) {
+		t.Fatalf("default agent was not restored: %s", restored)
 	}
 }
 
@@ -306,7 +405,7 @@ func TestDoctorDetectsModifiedAsset(t *testing.T) {
 	if err := InstallAssets(opts); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(opts.Home, ".config", "opencode", "commands", "eg.md")
+	path := filepath.Join(opts.Home, ".config", "opencode", "agents", "elgordo-ia.md")
 	if err := os.WriteFile(path, []byte("modified\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +467,10 @@ func TestEmbeddedAgentGraphAndSkillsStayRoleIsolated(t *testing.T) {
 	if len(agents) != 5 {
 		t.Fatalf("agents = %d, want 5", len(agents))
 	}
-	conductor := agents["eg"]
+	conductor := agents["elgordo-ia"]
+	if !strings.Contains(conductor, "description: ElGordo IA orchestrator") || !strings.Contains(conductor, "mode: primary") || strings.Contains(conductor, "hidden: true") {
+		t.Error("elgordo-ia must be the visible primary orchestrator")
+	}
 	for _, allowed := range []string{"eg-questioner: allow", "eg-planner: allow", "eg-executor: allow", "eg-qa: allow"} {
 		if !strings.Contains(conductor, allowed) {
 			t.Errorf("conductor missing delegation %q", allowed)
@@ -377,16 +479,42 @@ func TestEmbeddedAgentGraphAndSkillsStayRoleIsolated(t *testing.T) {
 	if !strings.Contains(conductor, "question: deny") || !strings.Contains(conductor, "edit: deny") {
 		t.Error("conductor must not edit or ask questions")
 	}
+	if !strings.Contains(conductor, "--accept-engram-install") || !strings.Contains(conductor, "--accept-openspec-install") {
+		t.Error("conductor must declare the approved dependency bootstrap flags")
+	}
+	bootstrapSkill, err := assets.ReadFile("assets/opencode/skills/eg-sdd-init/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(bootstrapSkill, []byte("Engram")) || !bytes.Contains(bootstrapSkill, []byte("OpenSpec")) || !bytes.Contains(bootstrapSkill, []byte("Node.js")) {
+		t.Error("SDD initialization must explain workflow dependency handling")
+	}
+	openSpecSkill, err := assets.ReadFile("assets/opencode/skills/eg-openspec-workflow/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(openSpecSkill, []byte("follow the same order and format and report `openspec: unavailable`")) {
+		t.Error("OpenSpec workflow must not fall back when the required CLI is unavailable")
+	}
 	if !strings.Contains(agents["eg-questioner"], "question: allow") || !strings.Contains(agents["eg-questioner"], "edit: deny") {
 		t.Error("questioner must be the non-editing question owner")
+	}
+	if !strings.Contains(agents["eg-questioner"], "hidden: true") {
+		t.Error("questioner must remain hidden behind the primary orchestrator")
 	}
 	for _, name := range []string{"eg-planner", "eg-executor", "eg-qa"} {
 		if !strings.Contains(agents[name], "question: deny") || !strings.Contains(agents[name], "task: deny") {
 			t.Errorf("%s must return blockers instead of questioning or delegating", name)
 		}
+		if !strings.Contains(agents[name], "hidden: true") {
+			t.Errorf("%s must remain hidden behind the primary orchestrator", name)
+		}
 	}
-	if !strings.Contains(agents["eg-executor"], `"git push*": deny`) || !strings.Contains(agents["eg-qa"], `"**/.elgordo/changes/*/qa.md": allow`) {
-		t.Error("executor push and QA product edit boundaries must remain denied")
+	if !strings.Contains(agents["eg-executor"], `"git push*": deny`) {
+		t.Error("executor push must remain denied")
+	}
+	if !strings.Contains(agents["eg-qa"], `".elgordo/changes/*/qa.md": allow`) {
+		t.Error("QA must retain its root-relative report-only edit permission")
 	}
 
 	legacy := []string{"eg-intake", "eg-plan", "eg-execute", "eg-qa"}
@@ -426,13 +554,106 @@ func TestEmbeddedAgentGraphAndSkillsStayRoleIsolated(t *testing.T) {
 			t.Errorf("required atomic skill %q is missing", name)
 		}
 	}
-	command, err := assets.ReadFile("assets/opencode/commands/eg.md")
+	if _, err := assets.ReadFile("assets/opencode/commands/eg.md"); err == nil {
+		t.Error("legacy /eg command must not remain embedded")
+	}
+}
+
+func TestAgentEditPermissionsStayRoleIsolatedAfterInstall(t *testing.T) {
+	opts := testOptions(t)
+	if err := InstallAssets(opts); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := map[string][]string{
+		"eg-planner": {
+			`"*": deny`,
+			`".elgordo/changes/*/intent.md": allow`,
+			`".elgordo/changes/*/plans/*.md": allow`,
+			`"openspec/changes/*/proposal.md": allow`,
+			`"openspec/changes/*/specs/**": allow`,
+			`"openspec/changes/*/design.md": allow`,
+			`"openspec/changes/*/tasks.md": allow`,
+		},
+		"eg-executor": {
+			`"*": allow`,
+			`".elgordo/**": deny`,
+			`".elgordo/changes/*/execution.md": allow`,
+			`"openspec/**": deny`,
+		},
+		"eg-qa": {
+			`"*": deny`,
+			`".elgordo/changes/*/qa.md": allow`,
+		},
+	}
+
+	for agent, wantRules := range expected {
+		t.Run(agent, func(t *testing.T) {
+			embeddedPath := "assets/opencode/agents/" + agent + ".md"
+			embedded, err := assets.ReadFile(embeddedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			installedPath := filepath.Join(opts.Home, ".config", "opencode", "agents", agent+".md")
+			installed, err := os.ReadFile(installedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(installed, embedded) {
+				t.Fatal("installed agent differs from embedded asset")
+			}
+			if got := editPermissionRules(string(embedded)); !equalStrings(got, wantRules) {
+				t.Errorf("edit rules = %#v, want %#v", got, wantRules)
+			}
+			if strings.Contains(string(embedded), `"**/`) {
+				t.Error("edit permissions must use root-relative patterns")
+			}
+		})
+	}
+	conductor, err := assets.ReadFile("assets/opencode/agents/elgordo-ia.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(command, []byte("agent: eg")) || bytes.Contains(command, []byte("/opsx-")) {
-		t.Error("/eg must remain the sole entrypoint and target the conductor")
+	installedConductor, err := os.ReadFile(filepath.Join(opts.Home, ".config", "opencode", "agents", "elgordo-ia.md"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !bytes.Equal(installedConductor, conductor) {
+		t.Fatal("installed conductor differs from embedded asset")
+	}
+	if !strings.Contains(string(conductor), "  edit: deny") {
+		t.Error("conductor must not edit artifacts")
+	}
+}
+
+func editPermissionRules(content string) []string {
+	var rules []string
+	inEdit := false
+	for _, line := range strings.Split(content, "\n") {
+		if line == "  edit:" {
+			inEdit = true
+			continue
+		}
+		if inEdit && len(line) > 0 && !strings.HasPrefix(line, "    ") {
+			break
+		}
+		if inEdit && strings.HasPrefix(line, "    ") {
+			rules = append(rules, strings.TrimSpace(line))
+		}
+	}
+	return rules
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestEveryAgentReferenceResolvesAndEverySkillHasAConsumer(t *testing.T) {

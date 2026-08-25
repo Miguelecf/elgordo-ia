@@ -1,6 +1,6 @@
 ---
 name: eg-change-intake
-description: "Trigger: /eg, new change, feature idea, intake. Convert an idea into a minimum project-aware change proposal through one question at a time."
+description: "Trigger: new change, feature idea, intake. Convert an idea into a minimum project-aware change proposal through one question at a time."
 license: MIT
 metadata:
   author: Miguelecf
@@ -14,7 +14,7 @@ Use only when no change is active or the engineer explicitly requests a new chan
 
 ## Hard Rules
 
-- Derive before asking: inspect repository layout, `elgordo status --json`, `openspec status --json` when OpenSpec is initialized, and Engram for prior decisions.
+- Derive before asking: inspect repository layout, the private runtime status check, `openspec status --json` when OpenSpec is initialized, and Engram for prior decisions.
 - Ask one meaningful question at a time; never ask for derivable facts.
 - Separate desired outcome, constraints, non-goals, and evidence of success.
 - Present tradeoffs for material architecture choices; never choose for the engineer.

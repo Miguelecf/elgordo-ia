@@ -10,9 +10,9 @@ metadata:
 
 ## Authority Split
 
-- ElGordo owns orchestration: workflow phase, gates, and approved scope come from `elgordo status --json` only.
+- ElGordo owns orchestration: workflow phase, gates, and approved scope come from the private runtime status check only.
 - OpenSpec owns artifact format and per-artifact status. Its `state.yaml` is never workflow authority.
-- Never use `/opsx` editor commands; use the OpenSpec CLI directly when it exists.
+- Never use `/opsx` editor commands. The OpenSpec CLI is required for versioned artifacts.
 
 ## Artifact Flow
 
@@ -25,13 +25,13 @@ Use the ElGordo change slug as the OpenSpec change name. Create artifacts in dep
 
 ## CLI Usage
 
-When the CLI exists, prefer it over hand-writing schema logic:
+Use the OpenSpec CLI rather than hand-writing schema logic:
 
 - `openspec status --change <slug> --json` — artifact completion and next steps.
 - `openspec instructions <artifact> --change <slug> --json` — authoritative template, rules, and output path per artifact.
 - `openspec validate <slug> --strict --json` — validate before marking planning ready.
 
-When the CLI is absent, follow the same order and format and report `openspec: unavailable`.
+When the CLI is absent, return `needs_human` so the conductor can obtain approval for lazy dependency bootstrap. Do not create or validate artifacts until `elgordo init` has installed or verified the pinned CLI.
 
 ## Output Contract
 

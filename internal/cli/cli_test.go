@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Miguelecf/elgordo-ia/internal/installer"
 )
 
 func TestProjectLifecycleCommands(t *testing.T) {
@@ -83,6 +86,9 @@ func TestInitStopsWhenOpenSpecInitializationFails(t *testing.T) {
 		Stdout:  &stdout,
 		Stderr:  &stderr,
 		Getwd:   func() (string, error) { return root, nil },
+		EnsureWorkflowDependencies: func(context.Context, installer.Options) error {
+			return nil
+		},
 		InitOpenSpec: func(string) error {
 			return errors.New("OpenSpec unavailable")
 		},
@@ -92,6 +98,74 @@ func TestInitStopsWhenOpenSpecInitializationFails(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".elgordo", "project.json")); !os.IsNotExist(err) {
 		t.Fatalf("workflow state created despite OpenSpec failure: %v", err)
+	}
+}
+
+func TestInitBootstrapsApprovedDependenciesBeforeOpenSpec(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	var steps []string
+	code := Run([]string{"init", "--accept-engram-install", "--accept-openspec-install"}, Dependencies{
+		Version: "test",
+		Stdin:   strings.NewReader(""),
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Getwd:   func() (string, error) { return root, nil },
+		EnsureWorkflowDependencies: func(_ context.Context, opts installer.Options) error {
+			if !opts.AcceptEngramInstall || !opts.AcceptOpenSpecInstall {
+				t.Fatal("init did not forward approved dependency installation")
+			}
+			steps = append(steps, "dependencies")
+			return nil
+		},
+		InitOpenSpec: func(root string) error {
+			steps = append(steps, "openspec")
+			return os.MkdirAll(filepath.Join(root, "openspec", "changes"), 0o755)
+		},
+	})
+	if code != 0 {
+		t.Fatal("init failed")
+	}
+	if got, want := strings.Join(steps, ","), "dependencies,openspec"; got != want {
+		t.Fatalf("steps = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".elgordo", "project.json")); err != nil {
+		t.Fatalf("project state missing: %v", err)
+	}
+}
+
+func TestInitLeavesProjectUninitializedWhenDependencyBootstrapFails(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	code := Run([]string{"init"}, Dependencies{
+		Version: "test",
+		Stdin:   strings.NewReader(""),
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Getwd:   func() (string, error) { return root, nil },
+		EnsureWorkflowDependencies: func(context.Context, installer.Options) error {
+			return errors.New("OpenSpec installation declined")
+		},
+		InitOpenSpec: func(string) error {
+			t.Fatal("OpenSpec initialization ran after dependency failure")
+			return nil
+		},
+	})
+	if code != 1 {
+		t.Fatalf("code = %d, want 1", code)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".elgordo", "project.json")); !os.IsNotExist(err) {
+		t.Fatalf("workflow state created despite dependency failure: %v", err)
 	}
 }
 
@@ -131,6 +205,9 @@ func runTestCLI(root string, args ...string) (int, string, string) {
 		Stdout:  &stdout,
 		Stderr:  &stderr,
 		Getwd:   func() (string, error) { return root, nil },
+		EnsureWorkflowDependencies: func(context.Context, installer.Options) error {
+			return nil
+		},
 		InitOpenSpec: func(root string) error {
 			return os.MkdirAll(filepath.Join(root, "openspec", "changes"), 0o755)
 		},

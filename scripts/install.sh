@@ -31,7 +31,7 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 if [ ! -r /dev/tty ]; then
-  echo "error: installation requires an interactive terminal for explicit dependency consent" >&2
+  echo "error: installation requires an interactive terminal to preserve existing OpenCode configuration" >&2
   echo "Download the release archive manually when running without a TTY." >&2
   exit 1
 fi

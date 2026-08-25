@@ -18,12 +18,13 @@ import (
 )
 
 type Dependencies struct {
-	Version      string
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
-	Getwd        func() (string, error)
-	InitOpenSpec func(string) error
+	Version                    string
+	Stdin                      io.Reader
+	Stdout                     io.Writer
+	Stderr                     io.Writer
+	Getwd                      func() (string, error)
+	EnsureWorkflowDependencies func(context.Context, installer.Options) error
+	InitOpenSpec               func(string) error
 }
 
 type app struct {
@@ -60,6 +61,9 @@ func Run(args []string, deps Dependencies) int {
 			cmd.Stderr = deps.Stderr
 			return cmd.Run()
 		}
+	}
+	if deps.EnsureWorkflowDependencies == nil {
+		deps.EnsureWorkflowDependencies = installer.EnsureWorkflowDependencies
 	}
 	a := app{deps: deps}
 	if err := a.run(args); err != nil {
@@ -114,21 +118,17 @@ func (a app) run(args []string) error {
 
 func (a app) install(args []string) error {
 	fs := newFlagSet("install", a.deps.Stderr)
-	acceptEngram := fs.Bool("accept-engram-install", false, "approve Engram installation when missing")
-	acceptOpenSpec := fs.Bool("accept-openspec-install", false, "approve OpenSpec installation when missing")
 	overwriteAssets := fs.Bool("overwrite-assets", false, "approve replacement of user-modified managed assets")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: elgordo install [--accept-engram-install] [--accept-openspec-install] [--overwrite-assets]")
+		return errors.New("usage: elgordo install [--overwrite-assets]")
 	}
 	opts, err := installer.DefaultOptions(a.deps.Version, a.deps.Stdin, a.deps.Stdout, a.deps.Stderr)
 	if err != nil {
 		return err
 	}
-	opts.AcceptEngramInstall = *acceptEngram
-	opts.AcceptOpenSpecInstall = *acceptOpenSpec
 	opts.OverwriteUserAssets = *overwriteAssets
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -202,15 +202,28 @@ func (a app) uninstall(args []string) error {
 func (a app) initProject(args []string) error {
 	fs := newFlagSet("init", a.deps.Stderr)
 	jsonOutput := fs.Bool("json", false, "print JSON")
+	acceptEngram := fs.Bool("accept-engram-install", false, "approve Engram installation when missing")
+	acceptOpenSpec := fs.Bool("accept-openspec-install", false, "approve OpenSpec installation when missing")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: elgordo init [--json]")
+		return errors.New("usage: elgordo init [--accept-engram-install] [--accept-openspec-install] [--json]")
 	}
 	store, err := a.store(false)
 	if err != nil {
 		return err
+	}
+	opts, err := installer.DefaultOptions(a.deps.Version, a.deps.Stdin, a.deps.Stdout, a.deps.Stderr)
+	if err != nil {
+		return err
+	}
+	opts.AcceptEngramInstall = *acceptEngram
+	opts.AcceptOpenSpecInstall = *acceptOpenSpec
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := a.deps.EnsureWorkflowDependencies(ctx, opts); err != nil {
+		return fmt.Errorf("prepare workflow dependencies: %w", err)
 	}
 	if err := a.deps.InitOpenSpec(store.Root); err != nil {
 		return fmt.Errorf("initialize OpenSpec with tools disabled: %w", err)
@@ -532,11 +545,11 @@ func (a app) usage() {
 	fmt.Fprintln(a.deps.Stdout, `ElGordo IA - human-led engineering workflow for OpenCode
 
 Usage:
-  elgordo install [--accept-engram-install] [--accept-openspec-install] [--overwrite-assets]
+  elgordo install [--overwrite-assets]
   elgordo sync [--yes]
   elgordo doctor [--json]
   elgordo uninstall
-  elgordo init
+  elgordo init [--accept-engram-install] [--accept-openspec-install]
   elgordo skill-registry refresh [--force]
   elgordo status [--json]
   elgordo change start <slug> [--title <title>]

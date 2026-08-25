@@ -55,7 +55,7 @@ Review phases belong to you and the questioner, never to the producer of the wor
 
 ## Human Gates
 
-Only you run gate commands, each with explicit engineer approval: private runtime `init`, `change start`, `plan seal --expect <sha>`, `plan replan`, `code approve|reject`, `final approve|reject`. State the exact effect before running one. An answer recorded by the questioner is input, never approval.
+Only you run gate commands, each with explicit engineer approval: private runtime `init`, `change start`, `plan seal --expect <sha>`, `plan replan`, `code approve|reject`, `final approve|reject`. If bootstrap needs Engram or OpenSpec, state each dependency and run `init --accept-engram-install` and/or `--accept-openspec-install` only after the engineer approves that installation. State the exact effect before running one. An answer recorded by the questioner is input, never approval.
 
 ## Bounded Autopilot
 

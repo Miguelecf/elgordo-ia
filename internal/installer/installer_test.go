@@ -57,7 +57,7 @@ func testOptions(t *testing.T) Options {
 		AcceptEngramInstall:   true,
 		AcceptOpenSpecInstall: true,
 		OverwriteUserAssets:   true,
-		Runner:                &fakeRunner{paths: map[string]string{"opencode": "/bin/opencode", "engram": "/bin/engram", "node": "/bin/node", "openspec": "/bin/openspec"}, fail: map[string]error{}, outputs: map[string][]byte{"node --version": []byte("v20.19.0\n")}},
+		Runner:                &fakeRunner{paths: map[string]string{"opencode": "/bin/opencode", "engram": "/bin/engram", "node": "/bin/node", "openspec": "/bin/openspec"}, fail: map[string]error{}, outputs: map[string][]byte{"node --version": []byte("v20.19.0\n"), "/bin/openspec --version": []byte("1.5.0\n")}},
 		Now:                   func() time.Time { return time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC) },
 	}
 }
@@ -219,6 +219,80 @@ func TestInstallConfiguresOpenCodeDefaultsWithoutOptionalDependencies(t *testing
 	}
 	if !bytes.Contains(data, []byte(`"default_agent": "elgordo-ia"`)) {
 		t.Fatalf("default agent missing from config: %s", data)
+	}
+}
+
+func TestEnsureWorkflowDependenciesInstallsApprovedDependencies(t *testing.T) {
+	opts := testOptions(t)
+	runner := opts.Runner.(*fakeRunner)
+	delete(runner.paths, "engram")
+	delete(runner.paths, "openspec")
+	runner.paths["go"] = "/bin/go"
+	runner.paths["npm"] = "/bin/npm"
+	runner.installPaths = map[string]map[string]string{
+		"go install github.com/Gentleman-Programming/engram/cmd/engram@v1.20.0": {"engram": "/bin/engram"},
+		"npm install -g @fission-ai/openspec@1.5.0":                             {"openspec": "/bin/openspec"},
+	}
+
+	if err := EnsureWorkflowDependencies(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.runs, "\n")
+	for _, command := range []string{
+		"go install github.com/Gentleman-Programming/engram/cmd/engram@v1.20.0",
+		"/bin/engram setup opencode",
+		"/bin/engram doctor --json",
+		"node --version",
+		"npm install -g @fission-ai/openspec@1.5.0",
+		"/bin/openspec --version",
+	} {
+		if !strings.Contains(joined, command) {
+			t.Errorf("missing command %q in %s", command, joined)
+		}
+	}
+}
+
+func TestEnsureWorkflowDependenciesStopsWhenOpenSpecInstallIsDeclined(t *testing.T) {
+	opts := testOptions(t)
+	opts.Stdin = strings.NewReader("no\n")
+	opts.AcceptOpenSpecInstall = false
+	delete(opts.Runner.(*fakeRunner).paths, "openspec")
+
+	err := EnsureWorkflowDependencies(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "OpenSpec installation declined") {
+		t.Fatalf("expected declined OpenSpec error, got %v", err)
+	}
+	for _, command := range opts.Runner.(*fakeRunner).runs {
+		if strings.Contains(command, "npm install") {
+			t.Fatalf("OpenSpec was installed after decline: %s", command)
+		}
+	}
+}
+
+func TestEnsureWorkflowDependenciesRejectsUnpinnedOpenSpec(t *testing.T) {
+	opts := testOptions(t)
+	opts.Stdin = strings.NewReader("no\n")
+	opts.AcceptOpenSpecInstall = false
+	opts.Runner.(*fakeRunner).outputs["/bin/openspec --version"] = []byte("1.4.0\n")
+
+	err := EnsureWorkflowDependencies(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "OpenSpec installation declined") {
+		t.Fatalf("expected declined pinned OpenSpec error, got %v", err)
+	}
+	for _, command := range opts.Runner.(*fakeRunner).runs {
+		if strings.Contains(command, "npm install") {
+			t.Fatalf("OpenSpec was updated after decline: %s", command)
+		}
+	}
+}
+
+func TestEnsureWorkflowDependenciesRequiresSupportedNode(t *testing.T) {
+	opts := testOptions(t)
+	delete(opts.Runner.(*fakeRunner).paths, "node")
+
+	err := EnsureWorkflowDependencies(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "Node.js >=20.19.0 is required") {
+		t.Fatalf("expected Node.js requirement error, got %v", err)
 	}
 }
 
@@ -404,6 +478,23 @@ func TestEmbeddedAgentGraphAndSkillsStayRoleIsolated(t *testing.T) {
 	}
 	if !strings.Contains(conductor, "question: deny") || !strings.Contains(conductor, "edit: deny") {
 		t.Error("conductor must not edit or ask questions")
+	}
+	if !strings.Contains(conductor, "--accept-engram-install") || !strings.Contains(conductor, "--accept-openspec-install") {
+		t.Error("conductor must declare the approved dependency bootstrap flags")
+	}
+	bootstrapSkill, err := assets.ReadFile("assets/opencode/skills/eg-sdd-init/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(bootstrapSkill, []byte("Engram")) || !bytes.Contains(bootstrapSkill, []byte("OpenSpec")) || !bytes.Contains(bootstrapSkill, []byte("Node.js")) {
+		t.Error("SDD initialization must explain workflow dependency handling")
+	}
+	openSpecSkill, err := assets.ReadFile("assets/opencode/skills/eg-openspec-workflow/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(openSpecSkill, []byte("follow the same order and format and report `openspec: unavailable`")) {
+		t.Error("OpenSpec workflow must not fall back when the required CLI is unavailable")
 	}
 	if !strings.Contains(agents["eg-questioner"], "question: allow") || !strings.Contains(agents["eg-questioner"], "edit: deny") {
 		t.Error("questioner must be the non-editing question owner")

@@ -25,7 +25,10 @@ import (
 //go:embed all:assets/opencode
 var assets embed.FS
 
-const defaultAgentName = "elgordo-ia"
+const (
+	defaultAgentName      = "elgordo-ia"
+	pinnedOpenSpecVersion = "1.5.0"
+)
 
 type Runner interface {
 	LookPath(file string) (string, error)
@@ -567,6 +570,15 @@ func ensureEngram(ctx context.Context, opts Options) error {
 	return nil
 }
 
+// EnsureWorkflowDependencies prepares the optional tools when a workflow first needs them.
+func EnsureWorkflowDependencies(ctx context.Context, opts Options) error {
+	opts = normalizeOptions(opts)
+	if err := ensureOpenSpec(ctx, opts); err != nil {
+		return err
+	}
+	return ensureEngram(ctx, opts)
+}
+
 func ensureOpenSpec(ctx context.Context, opts Options) error {
 	if _, err := opts.Runner.LookPath("node"); err != nil {
 		return errors.New("Node.js >=20.19.0 is required for OpenSpec; ElGordo will not install Node automatically. Install it from https://nodejs.org/ and retry")
@@ -581,14 +593,17 @@ func ensureOpenSpec(ctx context.Context, opts Options) error {
 
 	openSpecCommand, err := opts.Runner.LookPath("openspec")
 	if err == nil {
-		if err := opts.Runner.Run(ctx, openSpecCommand, "--version"); err != nil {
+		output, err := opts.Runner.Output(ctx, openSpecCommand, "--version")
+		if err != nil {
 			return fmt.Errorf("openspec --version failed: %w", err)
 		}
-		return nil
+		if strings.TrimSpace(string(output)) == pinnedOpenSpecVersion {
+			return nil
+		}
 	}
 	approved := opts.AcceptOpenSpecInstall
 	if !approved {
-		approved, err = confirm(opts, "OpenSpec is required for versioned specifications. Install @fission-ai/openspec now with npm?")
+		approved, err = confirm(opts, "OpenSpec 1.5.0 is required for versioned specifications. Install or update @fission-ai/openspec now with npm?")
 		if err != nil {
 			return err
 		}
@@ -599,15 +614,19 @@ func ensureOpenSpec(ctx context.Context, opts Options) error {
 	if _, err := opts.Runner.LookPath("npm"); err != nil {
 		return errors.New("npm is required to install OpenSpec; install it manually with `npm install -g @fission-ai/openspec@1.5.0` after installing npm")
 	}
-	if err := opts.Runner.Run(ctx, "npm", "install", "-g", "@fission-ai/openspec@1.5.0"); err != nil {
+	if err := opts.Runner.Run(ctx, "npm", "install", "-g", "@fission-ai/openspec@"+pinnedOpenSpecVersion); err != nil {
 		return fmt.Errorf("npm could not install OpenSpec: %w", err)
 	}
 	openSpecCommand, err = opts.Runner.LookPath("openspec")
 	if err != nil {
 		return errors.New("OpenSpec was installed but is not in PATH; add npm's global bin directory to PATH and retry")
 	}
-	if err := opts.Runner.Run(ctx, openSpecCommand, "--version"); err != nil {
+	output, err = opts.Runner.Output(ctx, openSpecCommand, "--version")
+	if err != nil {
 		return fmt.Errorf("openspec --version failed after installation: %w", err)
+	}
+	if strings.TrimSpace(string(output)) != pinnedOpenSpecVersion {
+		return fmt.Errorf("OpenSpec version %q is installed; %s is required", strings.TrimSpace(string(output)), pinnedOpenSpecVersion)
 	}
 	return nil
 }

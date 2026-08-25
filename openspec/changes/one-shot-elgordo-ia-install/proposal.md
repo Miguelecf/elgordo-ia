@@ -7,6 +7,7 @@ OpenCode-first one-shot installation of ElGordo IA
 - The installer prepares OpenCode so `elgordo-ia` is the primary agent.
 - The installer installs the private ElGordo runtime and managed OpenCode assets without requiring the user to run a separate workflow CLI.
 - The happy path becomes `curl ... | sh` followed by `opencode`.
+- The first workflow detects missing Engram or OpenSpec, requests explicit approval, and installs approved dependencies before creating project state.
 
 ## Capabilities
 

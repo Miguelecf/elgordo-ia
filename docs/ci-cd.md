@@ -6,8 +6,8 @@ ElGordo IA uses GitHub Actions for continuous integration and release publishing
 
 | Branch or reference | Purpose | Automation |
 |---|---|---|
-| `dev` | Day-to-day integration | CI on every push and pull request |
-| `main` | Reviewed stable source | CI on every push and pull request |
+| `dev` | Day-to-day integration | CI feedback on every push; direct pushes are allowed for the sole developer. |
+| `main` | Stable source | CI on every pull request; merges require the successful checks below. |
 | `v*` tag on `main` | Immutable public release | Quality gate, package, and GitHub Release |
 
 Never tag a commit outside `main`. The release workflow verifies this before publishing.
@@ -58,14 +58,13 @@ The release installer must use the immutable tag URL documented in the README, n
 
 ## GitHub Repository Settings
 
-Workflow files cannot enforce repository-level branch rules by themselves. Configure branch protection in GitHub for both `dev` and `main`:
+Workflow files cannot enforce repository-level branch rules by themselves. This repository uses a solodev-friendly configuration:
 
-1. Require a pull request before merging.
-2. Require these successful checks: `test (ubuntu-latest)`, `test (macos-latest)`, `quality`, and `package`.
-3. Require branches to be up to date before merging.
-4. On `main`, require one approving review in addition to the checks. On `dev`, checks and a pull request are sufficient for faster integration.
-5. Restrict direct pushes to both branches; use release tags only after merge to `main`.
-6. Protect the `v*` tag pattern or restrict who can create release tags.
+1. Leave `dev` unprotected so the sole developer can push directly; CI still reports every push.
+2. On `main`, require a pull request and these successful checks: `test (ubuntu-latest)`, `test (macos-latest)`, `quality`, and `package`.
+3. On `main`, require zero approving reviews and do not require the branch to be up to date before merging.
+4. On `main`, restrict direct pushes, force pushes, and branch deletion.
+5. Keep the `v*` tag pattern protected; create release tags only after merge to `main`.
 
 ## Boundaries
 

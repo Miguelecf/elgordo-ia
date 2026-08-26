@@ -270,10 +270,12 @@ OpenSpec scenarios use Given/When/Then Markdown. `eg-gherkin-verification` maps 
 ## Development
 
 ```bash
-go test ./...
-go vet ./...
-go build ./cmd/elgordo
+make check
+make race
+make coverage
 ```
+
+Read [`docs/ci-cd.md`](docs/ci-cd.md) for the automated testing, `dev` CI, release pipeline, and required GitHub branch-protection rules.
 
 ### Install From Source
 

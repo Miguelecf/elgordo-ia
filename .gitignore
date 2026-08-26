@@ -3,3 +3,4 @@
 /elgordo
 /orchestrator-flow.html
 *.test
+/coverage.out
